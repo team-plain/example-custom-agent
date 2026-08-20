@@ -65,6 +65,7 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 
 ```
 bun install
+bun run help      # the commands, which provider CLIs are installed, what .env is missing
 bun run check     # who the key is, what it can do, where the webhooks point
 bun run serve
 ```
@@ -78,7 +79,6 @@ already, since this project holds no model API key of its own.
 
 ```
 bun run serve --provider codex     # claude (default), codex, pi, opencode
-bun run help                       # commands, which providers are installed, what .env is missing
 ```
 
 The gotcha: only Claude Code and Codex are launched with approvals bypassed and their sandboxes off,
