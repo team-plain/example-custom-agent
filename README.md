@@ -49,7 +49,9 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 3. Get a public https URL that reaches this process. To run locally, use `ngrok http 8081`.
 
    Otherwise it's wherever you deploy it, which has to be somewhere that holds a long-running
-   process and has the `claude` CLI installed. Put the URL in `.env` as `PUBLIC_URL`.
+   process and has the `claude` CLI installed.
+
+   Put the URL in `.env` as `PUBLIC_URL`.
 
 4. Create the webhook under [Settings → Webhooks](https://app.plain.com/~/settings/webhooks/) →
    Add webhook target.
