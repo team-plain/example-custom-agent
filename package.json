@@ -6,6 +6,7 @@
   "scripts": {
     "serve": "bun run src/index.ts serve",
     "check": "bun run src/index.ts check",
+    "help": "bun run src/index.ts help",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

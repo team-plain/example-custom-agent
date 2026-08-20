@@ -1,5 +1,6 @@
 import { loadConfig, loadDotEnv } from "./config.ts";
 import { runCheck } from "./check.ts";
+import { runHelp } from "./help.ts";
 import { PlainClient } from "./plain.ts";
 import { PROVIDER_NAMES, type ProviderName } from "./providers.ts";
 import { runServe } from "./serve.ts";
@@ -22,6 +23,13 @@ function readProvider(): ProviderName {
 
 try {
   await loadDotEnv();
+
+  // Before loadConfig on purpose: help has to work when .env is what is wrong.
+  if (command === "help" || argv.includes("--help") || argv.includes("-h")) {
+    runHelp();
+    process.exit(0);
+  }
+
   const config = loadConfig();
   const client = new PlainClient(config.apiKey);
 
@@ -30,7 +38,7 @@ try {
   } else if (command === "serve") {
     await runServe(client, config, readProvider());
   } else {
-    throw new Error(`unknown command "${command}": use check or serve`);
+    throw new Error(`unknown command "${command}": run \`bun run help\``);
   }
 } catch (err) {
   console.error(fail(err instanceof Error ? err.message : String(err)));
