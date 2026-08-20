@@ -85,3 +85,8 @@ bun run serve --provider codex     # claude (default), codex, pi, opencode
 ```
 
 Sessions are stored per provider, one file per discussion, in `sessions/<provider>/`.
+
+## Building your own
+
+[PROTOCOL.md](PROTOCOL.md) has the webhook payload, every API call with a working curl, and the
+gotchas, so you can implement this in any language.
