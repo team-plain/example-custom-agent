@@ -40,7 +40,7 @@ export function loadConfig(): Config {
 
   const secret = (process.env.PLAIN_WEBHOOK_SECRET ?? "").trim();
   if (secret === "") {
-    throw new Error("set PLAIN_WEBHOOK_SECRET in .env (Plain -> Settings -> Request Signing)");
+    throw new Error("set PLAIN_WEBHOOK_SECRET in .env (Plain → Settings → Request Signing)");
   }
 
   return { apiKey, secret, publicURL: (process.env.PUBLIC_URL ?? "").replace(/\/+$/, "") };
