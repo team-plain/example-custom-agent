@@ -22,17 +22,17 @@ export async function runCheck(client: PlainClient): Promise<void> {
   try {
     const granted = await client.myApiKeyPermissions();
     console.log(`\npermissions    ${granted.length} granted`);
-    const missing = REQUIRED.filter((permission) => !granted.includes(permission));
-    for (const permission of missing) {
-      console.log(`FAIL  ${permission} is missing, so the agent cannot answer`);
+    for (const permission of REQUIRED) {
+      console.log(
+        granted.includes(permission)
+          ? `OK    ${permission}`
+          : `FAIL  ${permission} is missing, so the agent cannot answer`,
+      );
     }
     for (const permission of RECOMMENDED) {
       if (!granted.includes(permission)) {
         console.log(`warn  ${permission} is missing, so the discussion shows no agent status`);
       }
-    }
-    if (missing.length === 0) {
-      console.log("OK    the key has what it needs to answer");
     }
   } catch {
     console.log("\npermissions    not readable with this key, so check in the dashboard that it");
