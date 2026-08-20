@@ -1,0 +1,17 @@
+{
+  "name": "plain-example-custom-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "bun run src/index.ts serve",
+    "check": "bun run src/index.ts check",
+    "setup": "bun run src/index.ts setup",
+    "simulate": "bun run src/index.ts simulate",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
