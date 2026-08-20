@@ -53,8 +53,8 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 
    Put the URL in `.env` as `PUBLIC_URL`.
 
-4. Create the webhook under [Settings → Webhooks](https://app.plain.com/~/settings/webhooks/) →
-   Add webhook target.
+4. Create the webhook under
+   [Settings → Webhooks → Add webhook target](https://app.plain.com/~/settings/webhooks/add/).
 
    Pointed at `$PUBLIC_URL/plain/webhook`, subscribed to `discussion.message_created`, on version
    `2026-08-19` or later.
