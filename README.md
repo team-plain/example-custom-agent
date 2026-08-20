@@ -52,8 +52,10 @@ Written in TypeScript, run with [Bun](https://bun.sh).
    process and has the `claude` CLI installed. Put the URL in `.env` as `PUBLIC_URL`.
 
 4. Create the webhook under [Settings → Webhooks](https://app.plain.com/~/settings/webhooks/) →
-   Add webhook target, pointed at `$PUBLIC_URL/plain/webhook`,
-   subscribed to `discussion.message_created`, on version `2026-08-19` or later.
+   Add webhook target.
+
+   Pointed at `$PUBLIC_URL/plain/webhook`, subscribed to `discussion.message_created`, on version
+   `2026-08-19` or later.
 
 ## Running it
 
