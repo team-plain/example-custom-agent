@@ -1,16 +1,14 @@
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { truncate } from "./config.ts";
 import type { Provider, ProviderName } from "./providers.ts";
 import { PROVIDERS } from "./providers.ts";
 
-const INSTRUCTIONS = `You are a support agent embedded in Plain, a customer support tool.
-A member of the support team has asked you something inside a discussion attached to a support thread.
-Answer them directly and briefly. Your reply is rendered as markdown in the Plain UI, so use short
-paragraphs and lists rather than headings. Never mention that you run in a terminal. If you cannot
-answer, say so plainly and say what you would need.`;
+// Read from a file rather than baked in, so changing how the agent answers does not mean editing
+// TypeScript. Not every CLI has a system-prompt flag, so this is prepended to the first message of
+// a discussion instead; later turns resume a session that already carries it.
+const PROMPT_FILE = "./prompt.md";
 
 const WORKDIR = "./workdir";
 
@@ -54,15 +52,19 @@ export class Runner {
     readonly name: ProviderName,
     private readonly provider: Provider,
     private readonly sessions: SessionStore,
+    private readonly instructions: string,
   ) {}
 
   static async create(name: ProviderName): Promise<Runner> {
     const provider = PROVIDERS[name];
     if (!Bun.which(provider.bin)) throw new Error(`"${provider.bin}" is not on PATH`);
 
+    const prompt = Bun.file(PROMPT_FILE);
+    if (!(await prompt.exists())) throw new Error(`${PROMPT_FILE} is missing`);
+
     await mkdir(WORKDIR, { recursive: true });
     const sessions = await SessionStore.open(join(WORKDIR, `sessions-${name}.json`));
-    return new Runner(name, provider, sessions);
+    return new Runner(name, provider, sessions, (await prompt.text()).trim());
   }
 
   isResuming(discussionID: string): boolean {
@@ -73,14 +75,13 @@ export class Runner {
   async ask(discussionID: string, prompt: string): Promise<string> {
     const existing = this.sessions.get(discussionID);
     const sessionID = existing ?? randomUUID();
-    // Prepended rather than passed as a system prompt: not every CLI has a flag for one, and on
-    // later turns the session already carries it.
-    const full = existing ? prompt : `${INSTRUCTIONS}\n\n${prompt}`;
+    const full = existing || this.instructions === ""
+      ? prompt
+      : `${this.instructions}\n\n${prompt}`;
 
+    // No cwd: the CLI starts in whatever directory this process was launched from, so pointing the
+    // agent at a codebase is a matter of running it there. Nothing confines it to that directory.
     const proc = Bun.spawn([this.provider.bin, ...this.provider.args(full, sessionID, !!existing)], {
-      // Home, not the workdir: the agent is meant to reach the whole machine, and starting inside a
-      // scratch folder is what makes a run feel confined even when nothing is enforcing it.
-      cwd: homedir(),
       env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "example-custom-agent" },
       stdout: "pipe",
       stderr: "pipe",

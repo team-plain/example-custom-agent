@@ -72,6 +72,9 @@ bun run serve
 
 Then open a thread in Plain, click Ask Sidekick, pick your agent and ask it something.
 
+The system prompt is `prompt.md`, prepended to the first message of each discussion. Edit it to
+change what the agent is and what it will do.
+
 ## Using a different agent CLI
 
 Claude Code is the default. `--provider` swaps it for another CLI you have installed and logged in
