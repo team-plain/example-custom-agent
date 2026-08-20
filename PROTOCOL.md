@@ -1,11 +1,6 @@
 # Building your own custom agent
 
-What Plain sends you and what you send back, so you can implement this in any language. This repo is
-one implementation; the calls below are the whole protocol.
-
-Every request here was run against the live API. The mutations are shown with a placeholder
-discussion id, so they answer `not_found` rather than succeeding, which is how you can tell a wrong
-request shape from a wrong id.
+This document outlines the protocol details that this agent relies on. Use this to understand how the mechanism work and port it to any language or setup as needed.
 
 ## What you need in Plain
 
@@ -65,7 +60,7 @@ whitespace and the signature will never match. Compare in constant time.
 
 ## 3. Decide whether to answer
 
-Answer only when all of these hold, or you will either loop forever or step on another agent:
+Answer only when all of these hold:
 
 | Condition | Why |
 | --- | --- |
@@ -116,8 +111,7 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
   }'
 ```
 
-The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`, and `NEEDS_INPUT` when you give
-up. Settle on `IDLE` last: that is what marks the discussion unread, so the answer surfaces.
+The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on `IDLE` last: that is what marks the discussion unread, so the answer surfaces.
 
 ## 6. Two calls worth having
 
