@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
 import { truncate } from "./config.ts";
 
 const SYSTEM_PROMPT_ADDITION = `You are a support agent embedded in Plain, a customer support tool.
@@ -17,6 +17,10 @@ const NO_SANDBOX_SETTINGS = JSON.stringify({ sandbox: { enabled: false } });
 
 /** Every path under it. --add-dir is what lifts tool access beyond the directory Claude starts in. */
 const WHOLE_FILESYSTEM = "/";
+
+const WORKDIR = "./workdir";
+
+const TIMEOUT_MS = 180_000;
 
 type ClaudeResult = {
   type?: string;
@@ -61,15 +65,11 @@ export class SessionStore {
 }
 
 export class ClaudeRunner {
-  private constructor(
-    private readonly config: Config,
-    private readonly sessions: SessionStore,
-  ) {}
+  private constructor(private readonly sessions: SessionStore) {}
 
-  static async create(config: Config): Promise<ClaudeRunner> {
-    await mkdir(config.workdir, { recursive: true });
-    const sessions = await SessionStore.open(join(config.workdir, "sessions.json"));
-    return new ClaudeRunner(config, sessions);
+  static async create(): Promise<ClaudeRunner> {
+    await mkdir(WORKDIR, { recursive: true });
+    return new ClaudeRunner(await SessionStore.open(join(WORKDIR, "sessions.json")));
   }
 
   isResuming(discussionID: string): boolean {
@@ -89,17 +89,19 @@ export class ClaudeRunner {
     }
     // Auto mode lets Claude approve its own tool calls, which is the only way a headless turn gets
     // to use tools at all: with the default mode every prompt is a denial nobody is there to answer.
-    args.push("--permission-mode", this.config.permissionMode);
+    args.push("--permission-mode", "auto");
     args.push("--add-dir", WHOLE_FILESYSTEM);
     args.push("--settings", NO_SANDBOX_SETTINGS);
     args.push(prompt);
 
-    const proc = Bun.spawn([this.config.claudeBin, ...args], {
-      cwd: this.config.claudeCwd,
+    const proc = Bun.spawn(["claude", ...args], {
+      // Home, not the workdir: the agent is meant to reach the whole machine, and starting inside a
+      // scratch folder is what makes a run feel confined even when nothing is enforcing it.
+      cwd: homedir(),
       env: {
         ...process.env,
         // A nested run must not inherit this process's session identity.
-        CLAUDE_CODE_ENTRYPOINT: "plain-example-custom-agent",
+        CLAUDE_CODE_ENTRYPOINT: "example-custom-agent",
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -109,7 +111,7 @@ export class ClaudeRunner {
     const timer = setTimeout(() => {
       timedOut = true;
       proc.kill();
-    }, this.config.timeoutMs);
+    }, TIMEOUT_MS);
 
     let stdout: string;
     let stderr: string;
@@ -125,7 +127,7 @@ export class ClaudeRunner {
     }
 
     if (timedOut) {
-      throw new Error(`claude timed out after ${this.config.timeoutMs / 1000}s`);
+      throw new Error(`claude timed out after ${TIMEOUT_MS / 1000}s`);
     }
     if (exitCode !== 0) {
       throw new Error(`claude exited with ${exitCode}: ${truncate(stderr.trim(), 500)}`);
@@ -155,9 +157,8 @@ export class ClaudeRunner {
     return result.result;
   }
 
-  /** Resolves the binary up front so a typo is a startup error, not a failed discussion. */
-  async check(): Promise<void> {
-    const path = Bun.which(this.config.claudeBin);
-    if (!path) throw new Error(`"${this.config.claudeBin}" is not on PATH`);
+  /** Resolved up front so a missing CLI is a startup error, not a failed discussion. */
+  static check(): void {
+    if (!Bun.which("claude")) throw new Error('"claude" is not on PATH');
   }
 }

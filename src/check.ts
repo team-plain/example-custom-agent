@@ -1,11 +1,10 @@
 import type { PlainClient } from "./plain.ts";
 
-// The one permission the agent cannot run without: it is how the answer gets posted.
-const REQUIRED = "threadDiscussionMessage:create";
+// The minimum from the README: create posts the answer, read pulls the thread it is about.
+const REQUIRED = ["threadDiscussionMessage:create", "threadDiscussion:read"];
 
-// Without these the agent still answers, but the discussion never shows an agent status.
-// updateDiscussionAgentStatus reads the discussion before editing it, so it needs both.
-const RECOMMENDED = ["threadDiscussion:read", "threadDiscussion:edit"];
+// Only needed for the IN_PROGRESS / IDLE status on the discussion, which is cosmetic.
+const RECOMMENDED = ["threadDiscussion:edit"];
 
 /** Prints who the API key is, whether it can answer, and where its webhooks point. */
 export async function runCheck(client: PlainClient): Promise<void> {
@@ -14,7 +13,8 @@ export async function runCheck(client: PlainClient): Promise<void> {
   console.log(`custom agent   ${me.isCustomAgent}`);
   if (!me.isCustomAgent) {
     console.log("\nFAIL  this machine user is not marked as a custom agent, so it will not appear");
-    console.log("      in the Ask Sidekick picker. Settings -> Machine users -> Custom agent.");
+    console.log("      in the Ask Sidekick picker. Toggle it on at");
+    console.log("      https://app.plain.com/~/settings/machine-users/");
   }
 
   // Only readable when the key holds apiKey:read, which many keys do not. Not being able to list
@@ -22,20 +22,21 @@ export async function runCheck(client: PlainClient): Promise<void> {
   try {
     const granted = await client.myApiKeyPermissions();
     console.log(`\npermissions    ${granted.length} granted`);
-    if (!granted.includes(REQUIRED)) {
-      console.log(`FAIL  ${REQUIRED} is missing, so the agent cannot post an answer`);
+    const missing = REQUIRED.filter((permission) => !granted.includes(permission));
+    for (const permission of missing) {
+      console.log(`FAIL  ${permission} is missing, so the agent cannot answer`);
     }
     for (const permission of RECOMMENDED) {
       if (!granted.includes(permission)) {
         console.log(`warn  ${permission} is missing, so the discussion shows no agent status`);
       }
     }
-    if (granted.includes(REQUIRED) && RECOMMENDED.every((p) => granted.includes(p))) {
-      console.log(`OK    ${REQUIRED} and the status permissions are granted`);
+    if (missing.length === 0) {
+      console.log("OK    the key has what it needs to answer");
     }
   } catch {
-    console.log(`\npermissions    not readable with this key, so check in the dashboard that it`);
-    console.log(`               grants ${REQUIRED}`);
+    console.log("\npermissions    not readable with this key, so check in the dashboard that it");
+    console.log(`               grants ${REQUIRED.join(" and ")}`);
   }
 
   try {

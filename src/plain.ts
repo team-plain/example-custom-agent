@@ -1,41 +1,24 @@
-import {
-  DISCUSSION_MESSAGE_CREATED_EVENT,
-  WEBHOOK_TARGET_VERSION,
-  truncate,
-} from "./config.ts";
+import { API_URL, truncate } from "./config.ts";
 
 export type MachineUser = {
   id: string;
   fullName: string;
-  publicName: string;
   isCustomAgent: boolean;
 };
 
 export type WebhookTarget = {
-  id: string;
   url: string;
   version: string;
   isEnabled: boolean;
-  description: string;
   eventSubscriptions: { eventType: string }[];
 };
 
 export type Discussion = {
   id: string;
-  title: string;
-  threadId: string | null;
-  status: string;
-  agentStatus: string;
-  thread: {
-    id: string;
-    title: string;
-    customer: { id: string; fullName: string } | null;
-  } | null;
+  thread: { title: string; customer: { fullName: string } | null } | null;
 };
 
 type MutationError = { message: string; type: string; code: string } | null;
-
-const WEBHOOK_TARGET_FIELDS = "id url version isEnabled description eventSubscriptions { eventType }";
 
 function mutationError(error: MutationError): Error | null {
   if (!error) return null;
@@ -43,17 +26,14 @@ function mutationError(error: MutationError): Error | null {
 }
 
 export class PlainClient {
-  constructor(
-    private readonly apiURL: string,
-    private readonly apiKey: string,
-  ) {}
+  constructor(private readonly apiKey: string) {}
 
   private async request<T>(
     query: string,
     variables: Record<string, unknown> | null,
     signal?: AbortSignal,
   ): Promise<T> {
-    const res = await fetch(this.apiURL, {
+    const res = await fetch(API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -91,91 +71,23 @@ export class PlainClient {
    */
   async myMachineUser(): Promise<MachineUser> {
     const data = await this.request<{ myMachineUser: MachineUser | null }>(
-      "query { myMachineUser { id fullName publicName isCustomAgent } }",
+      "query { myMachineUser { id fullName isCustomAgent } }",
       null,
     );
     if (!data.myMachineUser) throw new Error("this API key does not belong to a machine user");
     return data.myMachineUser;
   }
 
-  /**
-   * The same secret Plain signs outbound webhooks with, so the agent can fetch it instead of having
-   * it pasted in. Human-user only in practice, so callers must handle the failure.
-   */
-  async workspaceHmacSecret(): Promise<string> {
-    const data = await this.request<{ workspaceHmac: { hmacSecret: string | null } | null }>(
-      "query { workspaceHmac { hmacSecret } }",
-      null,
-    );
-    const secret = data.workspaceHmac?.hmacSecret;
-    if (!secret) throw new Error("no workspace HMAC secret has been generated yet");
-    return secret;
-  }
-
   async webhookTargets(): Promise<WebhookTarget[]> {
     const data = await this.request<{
       webhookTargets: { edges: { node: WebhookTarget }[] };
-    }>(`query { webhookTargets(first: 100) { edges { node { ${WEBHOOK_TARGET_FIELDS} } } } }`, null);
+    }>(
+      `query { webhookTargets(first: 100) { edges { node {
+        url version isEnabled eventSubscriptions { eventType }
+      } } } }`,
+      null,
+    );
     return data.webhookTargets.edges.map((edge) => edge.node);
-  }
-
-  async createWebhookTarget(url: string, description: string): Promise<WebhookTarget> {
-    const data = await this.request<{
-      createWebhookTarget: { webhookTarget: WebhookTarget | null; error: MutationError };
-    }>(
-      `mutation ($input: CreateWebhookTargetInput!) {
-        createWebhookTarget(input: $input) {
-          webhookTarget { ${WEBHOOK_TARGET_FIELDS} }
-          error { message type code }
-        }
-      }`,
-      {
-        input: {
-          url,
-          description,
-          isEnabled: true,
-          version: WEBHOOK_TARGET_VERSION,
-          eventSubscriptions: [{ eventType: DISCUSSION_MESSAGE_CREATED_EVENT }],
-        },
-      },
-    );
-    const failure = mutationError(data.createWebhookTarget.error);
-    if (failure) throw failure;
-    if (!data.createWebhookTarget.webhookTarget) {
-      throw new Error("createWebhookTarget returned no target");
-    }
-    return data.createWebhookTarget.webhookTarget;
-  }
-
-  /**
-   * Repoints an existing target, which is what you want every time ngrok hands you a new hostname.
-   */
-  async updateWebhookTarget(targetID: string, url: string): Promise<WebhookTarget> {
-    const data = await this.request<{
-      updateWebhookTarget: { webhookTarget: WebhookTarget | null; error: MutationError };
-    }>(
-      `mutation ($input: UpdateWebhookTargetInput!) {
-        updateWebhookTarget(input: $input) {
-          webhookTarget { ${WEBHOOK_TARGET_FIELDS} }
-          error { message type code }
-        }
-      }`,
-      {
-        input: {
-          webhookTargetId: targetID,
-          url: { value: url },
-          isEnabled: { value: true },
-          version: { value: WEBHOOK_TARGET_VERSION },
-          eventSubscriptions: [{ eventType: DISCUSSION_MESSAGE_CREATED_EVENT }],
-        },
-      },
-    );
-    const failure = mutationError(data.updateWebhookTarget.error);
-    if (failure) throw failure;
-    if (!data.updateWebhookTarget.webhookTarget) {
-      throw new Error("updateWebhookTarget returned no target");
-    }
-    return data.updateWebhookTarget.webhookTarget;
   }
 
   /**
@@ -186,8 +98,8 @@ export class PlainClient {
     const data = await this.request<{ discussion: Discussion | null }>(
       `query ($discussionId: ID!) {
         discussion(discussionId: $discussionId) {
-          id title threadId status agentStatus
-          thread { id title customer { id fullName } }
+          id
+          thread { title customer { fullName } }
         }
       }`,
       { discussionId: discussionID },

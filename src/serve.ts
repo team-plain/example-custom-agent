@@ -1,8 +1,4 @@
-import {
-  DISCUSSION_MESSAGE_CREATED_EVENT,
-  WEBHOOK_PATH,
-  type Config,
-} from "./config.ts";
+import { DISCUSSION_MESSAGE_CREATED_EVENT, PORT, WEBHOOK_PATH, type Config } from "./config.ts";
 import { ClaudeRunner } from "./claude.ts";
 import type { MachineUser, PlainClient } from "./plain.ts";
 import {
@@ -180,28 +176,11 @@ export async function runServe(client: PlainClient, config: Config): Promise<voi
     );
   }
 
-  // workspaceHmac is human-user only, so an API key can never fetch its own signing secret. The
-  // query is still tried in case the key is ever swapped for a user token.
-  let secret = config.secret;
-  if (secret === "") {
-    try {
-      secret = await client.workspaceHmacSecret();
-      console.log("fetched the workspace HMAC secret from Plain");
-    } catch (err) {
-      throw new Error(
-        "set PLAIN_WEBHOOK_SECRET to your workspace signing secret (Settings -> Webhooks -> " +
-          `Signing secret). It cannot be read with an API key: ${message(err)}`,
-      );
-    }
-  }
-
-  const runner = await ClaudeRunner.create(config);
-  await runner.check();
-
-  const agent = new Agent(client, runner, me, secret);
+  ClaudeRunner.check();
+  const agent = new Agent(client, await ClaudeRunner.create(), me, config.secret);
 
   Bun.serve({
-    port: config.port,
+    port: PORT,
     idleTimeout: 30,
     routes: {
       [WEBHOOK_PATH]: (req: Request) => agent.handleWebhook(req),
@@ -210,13 +189,10 @@ export async function runServe(client: PlainClient, config: Config): Promise<voi
     fetch: () => new Response("not found\n", { status: 404 }),
   });
 
-  console.log(`listening on :${config.port}${WEBHOOK_PATH}`);
-  console.log(
-    `claude runs in ${config.claudeCwd} with --permission-mode ${config.permissionMode}, ` +
-      "no sandbox and the whole filesystem in reach",
-  );
+  console.log(`listening on :${PORT}${WEBHOOK_PATH}`);
+  console.log("claude runs unsandboxed in auto mode with the whole filesystem in reach");
   if (config.publicURL !== "") {
-    console.log(`webhook target url: ${config.publicURL}${WEBHOOK_PATH}`);
+    console.log(`point your Plain webhook target at ${config.publicURL}${WEBHOOK_PATH}`);
   }
 }
 
