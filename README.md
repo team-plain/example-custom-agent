@@ -1,12 +1,9 @@
 # Plain example custom agent
 
-A **custom agent for Plain**, written in TypeScript and run with [Bun](https://bun.sh).
-
-In Plain, a support teammate opens **Ask Sidekick** on a thread and picks an agent from the picker.
-Picking Plain's own Sidekick runs Plain's agent. Picking a *custom* agent means Plain runs nothing:
-it just fires a webhook at **your** server and waits for you to write the answer back. This project
-is that server. It answers by running the `claude` CLI on the machine it is running on and posting
-the reply into the discussion.
+In Plain, Ask Sidekick lets a teammate pick which agent answers a thread. Pick a custom agent and
+Plain runs nothing itself: it fires a webhook at your server and waits for you to write the reply
+back. This is that server. It answers by running the `claude` CLI on whatever machine it is running
+on, then posts the answer into the discussion.
 
 ```
 Plain  --discussion.message_created webhook-->  this process  --claude -p-->  Claude Code
@@ -14,135 +11,54 @@ Plain  --discussion.message_created webhook-->  this process  --claude -p-->  Cl
                                                      +--sendDiscussionMessage--> Plain
 ```
 
-There is no SDK here, just `fetch` against Plain's GraphQL API. The TypeScript SDK bundles a webhook
-schema frozen at `2026-02-27` that does not know `discussion.message_created` and rejects the event.
+Claude runs with `--permission-mode auto` and no sandbox, so it approves its own tool calls and can
+read or change anything the user running this process can. The prompt is whatever someone typed into
+a discussion, which means anyone in your workspace effectively has a shell on this machine. Run it
+somewhere you don't mind that.
 
-> **This gives a Plain discussion shell access to this machine.** Claude runs with
-> `--permission-mode auto` and no sandbox, so it approves its own tool calls and can read and change
-> anything the user running this process can. Whatever a teammate types in a discussion becomes the
-> prompt. Run it on a machine you are willing to hand over, not on your laptop with production
-> credentials sitting in it.
+Written in TypeScript, run with [Bun](https://bun.sh). No SDK: the TypeScript SDK pins a webhook
+schema from `2026-02-27` that doesn't know `discussion.message_created` and rejects the event.
 
-## What it does on each delivery
+## Setting it up in Plain
 
-1. Verifies the `Plain-Request-Signature` HMAC over the raw request body.
-2. Returns `200` immediately, then works in the background. Plain retries anything that is not a
-   2xx, and a Claude turn takes far longer than the delivery timeout.
-3. Answers only if the discussion is an `AGENT_SESSION` bound to **this** machine user and the
-   message is a person's turn (`OUTBOUND`). On an agent session the agent's own output is `INBOUND`,
-   so getting this backwards makes it answer itself forever.
-4. Sets `agentStatus` to `IN_PROGRESS`, runs `claude -p`, posts the answer, then settles on `IDLE`.
-   Plain runs no session for a custom agent, so without those calls the discussion looks permanently
-   idle. Settling on `IDLE` is also what marks it unread, so the answer surfaces.
-5. Keeps one Claude session per discussion in `workdir/sessions.json`, so a discussion is one
-   conversation rather than a series of unrelated questions.
+1. Create a machine user under Settings -> Machine users and give it an API key. The key needs
+   `threadDiscussionMessage:create`, which is how the answer gets posted. Add `threadDiscussion:read`
+   and `threadDiscussion:edit` so the discussion shows an agent status while the agent works, and the
+   `webhookTarget:*` permissions if you want `bun run setup` to manage the webhook for you.
 
-## Set it up in Plain
+2. Turn on Custom agent for that machine user. Until you do, it never appears in the Ask Sidekick
+   picker and nothing else you set up will make it show.
 
-### 1. Create a machine user and an API key
+3. Copy `.env.example` to `.env`. Fill in `PLAIN_API_KEY`, and `PLAIN_WEBHOOK_SECRET` from
+   Settings -> Webhooks -> Signing secret. An API key can't read that secret, so it has to be pasted.
 
-Plain dashboard -> **Settings -> Machine users -> New machine user**, then create an API key on it.
+4. Get a public https URL that reaches this process. Locally that's `ngrok http 8081`. Otherwise it's
+   wherever you deploy it, which has to be somewhere that holds a long-running process and has the
+   `claude` CLI installed, so serverless won't work. Put the URL in `.env` as `PUBLIC_URL`.
 
-The key needs:
+5. Create the webhook under Settings -> Webhooks -> New, pointed at `$PUBLIC_URL/plain/webhook`,
+   subscribed to `discussion.message_created`, on version `2026-08-19` or later. Earlier versions
+   don't carry that event, and a target pinned to one is silently never sent it. If the key has the
+   `webhookTarget:*` permissions, `bun run setup` does this instead, and repoints the existing target
+   every time ngrok hands you a new hostname.
 
-| Permission | Why |
-| --- | --- |
-| `threadDiscussionMessage:create` | **Required.** Post the answer. Nothing works without it. |
-| `threadDiscussion:read` and `threadDiscussion:edit` | Recommended. Report `IN_PROGRESS` / `IDLE`, otherwise the discussion shows no agent status. `updateDiscussionAgentStatus` reads the discussion before editing it, so it needs both. |
-| `thread:read` | Optional. Puts the thread title and customer in the first prompt. |
-| `webhookTarget:read` / `:create` / `:edit` | Optional. Only so `bun run setup` can create and repoint the webhook target for you. |
-
-Put the key in `.env` as `PLAIN_API_KEY`.
-
-### 2. Mark the machine user as a custom agent
-
-**Settings -> Machine users -> your machine user -> Custom agent.** Without this it never shows up
-in the Ask Sidekick picker, and nothing else you do will make it appear.
-
-### 3. Copy the webhook signing secret
-
-**Settings -> Webhooks -> Signing secret**, into `.env` as `PLAIN_WEBHOOK_SECRET`. An API key cannot
-read this itself (the query is human-user only), so it has to be pasted.
-
-### 4. Point a webhook at this process
-
-You need a public https URL that reaches it.
-
-- **Locally:** `ngrok http 8081` and use the https URL it prints. It changes every restart, so
-  expect to repoint the target.
-- **Deployed:** the https URL of wherever you run this (Fly, Railway, a VM, anything that can hold a
-  long-lived process and run the `claude` CLI). Serverless will not work: a turn outlives a
-  function.
-
-Put it in `.env` as `PUBLIC_URL`, then either create the target in the dashboard
-(**Settings -> Webhooks -> New**):
-
-- URL: `$PUBLIC_URL/plain/webhook`
-- Event: `discussion.message_created`
-- **Version: `2026-08-19` or later.** The event was added in that version, and a target pinned to an
-  older one is silently never sent it.
-
-Or, if the key holds the `webhookTarget:*` permissions, let the agent do it:
-
-```
-bun run setup
-```
-
-`setup` repoints the existing target pointing at `/plain/webhook` instead of adding a second one,
-which is what you want each time ngrok hands you a new hostname.
-
-## Run it
+## Using it
 
 ```
 bun install
-bun run check     # who the key is, what it can do, where its webhooks point
-bun run serve     # start the agent
+bun run check     # who the key is, what it can do, where the webhooks point
+bun run serve
 ```
 
-Then open a thread in Plain, click **Ask Sidekick**, pick your agent and ask it something.
+Then open a thread in Plain, click Ask Sidekick, pick your agent and ask it something. Each
+discussion keeps its own Claude session in `workdir/sessions.json`, so a discussion is one
+conversation rather than a series of unrelated questions.
 
-## Commands
+`bun run simulate "question"` posts a signed fake delivery at a running `serve`, which is the fastest
+way to tell a local bug from a webhook that never arrived. The discussion id in it isn't real, so
+posting the answer fails with `not_found`. Everything before that point is real.
 
-| Command | What it does |
-| --- | --- |
-| `bun run serve` | Runs the agent. This is the default. |
-| `bun run check` | Prints the machine user, the custom-agent flag, the key's permissions and the workspace's webhook targets. |
-| `bun run setup` | Creates or repoints the webhook target at `$PUBLIC_URL`. |
-| `bun run simulate "question"` | Posts a synthetic, correctly signed delivery at a running `serve`. |
-
-`simulate` needs nothing from Plain except the API key, so it separates a local bug from a webhook
-that never arrived. The discussion id it uses is fake, so the answer fails to post with `not_found`:
-that is expected, and everything before that point is real.
-
-## Configuration
-
-`.env` overrides the shell on purpose: a stale exported `PLAIN_API_KEY` silently runs the agent as a
-different machine user, which is very hard to spot.
-
-| Variable | Default | Notes |
-| --- | --- | --- |
-| `PLAIN_API_KEY` | — | Required. |
-| `PLAIN_WEBHOOK_SECRET` | — | Required. Workspace signing secret. |
-| `PUBLIC_URL` | — | The https URL that reaches this process. Only needed for `setup`. |
-| `PORT` | `8081` | |
-| `PLAIN_API_URL` | `https://core-api.uk.plain.com/graphql/v1` | |
-| `CLAUDE_BIN` | `claude` | |
-| `CLAUDE_CWD` | your home directory | Where Claude starts. It can reach the whole filesystem regardless. |
-| `CLAUDE_PERMISSION_MODE` | `auto` | Set it to `plan` or `default` to make it far less capable and far safer. |
-| `CLAUDE_TIMEOUT_SECONDS` | `180` | |
-| `AGENT_WORKDIR` | `./workdir` | Where `sessions.json` lives. |
-
-Claude Code uses its own logged-in session, so there is no Anthropic key anywhere in this project.
-
-## Files
-
-| File | Role |
-| --- | --- |
-| `src/index.ts` | Commands and the webhook-target setup |
-| `src/config.ts` | `.env` loading and config |
-| `src/plain.ts` | Plain GraphQL client |
-| `src/webhook.ts` | Signature check, payload types, and which deliveries to answer |
-| `src/claude.ts` | Runs `claude -p` and keeps one session per discussion |
-| `src/serve.ts` | HTTP server and the respond loop |
-| `src/check.ts` | Prints what the key can do |
-| `src/simulate.ts` | Synthetic signed delivery for local testing |
+Config lives in `.env`, documented in `.env.example`. `CLAUDE_PERMISSION_MODE` is the one worth
+knowing about: set it to `plan` or `default` to make the agent much less capable and much safer.
+`.env` overrides your shell on purpose, because a stale exported `PLAIN_API_KEY` quietly runs the
+agent as a different machine user.
