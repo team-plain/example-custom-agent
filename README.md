@@ -35,11 +35,13 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 1. Create a machine user under [Settings -> Machine users](https://app.plain.com/~/settings/machine-users/)
    and give it an API key.
 
-Make sure you also toggle the "Custom agent" toggle on the machine user so it's available as a target when running a Sidekick conversation.
+   Make sure you also toggle the "Custom agent" toggle on the machine user so it's available as a
+   target when running a Sidekick conversation.
 
-Minimum permissions required:
- - `threadDiscussionMessage:create`
- - `threadDiscussion:read`
+   Minimum permissions required:
+
+   - `threadDiscussionMessage:create`
+   - `threadDiscussion:read`
 
 2. Copy `.env.example` to `.env`. Fill in `PLAIN_API_KEY`, and `PLAIN_WEBHOOK_SECRET` from
    [Settings -> Request Signing](https://app.plain.com/~/settings/request-signing/).
