@@ -1,5 +1,7 @@
 import { DISCUSSION_MESSAGE_CREATED_EVENT, PORT, WEBHOOK_PATH, type Config } from "./config.ts";
-import { ClaudeRunner } from "./claude.ts";
+import type { ProviderName } from "./providers.ts";
+import { bold, cyan, dim, fail, green, label, red, warn } from "./ui.ts";
+import { Runner } from "./runner.ts";
 import type { MachineUser, PlainClient } from "./plain.ts";
 import {
   SIGNATURE_HEADER,
@@ -18,7 +20,7 @@ class Agent {
 
   constructor(
     private readonly client: PlainClient,
-    private readonly runner: ClaudeRunner,
+    private readonly runner: Runner,
     private readonly me: MachineUser,
     private readonly secret: string,
   ) {}
@@ -36,7 +38,7 @@ class Agent {
     try {
       verifySignature(body, req.headers.get(SIGNATURE_HEADER) ?? "", this.secret);
     } catch (err) {
-      console.log(`rejected delivery: ${message(err)}`);
+      console.log(`${red("rejected")} ${message(err)}`);
       return new Response("invalid signature\n", { status: 401 });
     }
 
@@ -44,7 +46,7 @@ class Agent {
     try {
       envelope = JSON.parse(body) as WebhookEnvelope;
     } catch (err) {
-      console.log(`rejected delivery: body is not valid json: ${message(err)}`);
+      console.log(`${red("rejected")} body is not valid json: ${message(err)}`);
       return new Response("invalid json\n", { status: 400 });
     }
 
@@ -56,24 +58,26 @@ class Agent {
 
   private async dispatch(envelope: WebhookEnvelope): Promise<void> {
     if (envelope.type !== DISCUSSION_MESSAGE_CREATED_EVENT) {
-      console.log(`event ${envelope.id}: ignoring ${envelope.type}`);
+      console.log(`${dim(envelope.id)} ignoring ${envelope.type}`);
       return;
     }
 
     const payload = envelope.payload as DiscussionMessageCreatedPayload;
     if (!payload?.discussion || !payload.message) {
-      console.log(`event ${envelope.id}: payload did not match ${DISCUSSION_MESSAGE_CREATED_EVENT}`);
+      console.log(
+        `${dim(envelope.id)} payload did not match ${DISCUSSION_MESSAGE_CREATED_EVENT}`,
+      );
       return;
     }
 
     const verdict = classify(payload, this.me.id);
     if (!verdict.answer) {
-      console.log(`event ${envelope.id}: skipping, ${verdict.reason}`);
+      console.log(`${dim(envelope.id)} skipped: ${verdict.reason}`);
       return;
     }
 
     if (this.seen.has(payload.message.id)) {
-      console.log(`event ${envelope.id}: already handled message ${payload.message.id}`);
+      console.log(`${dim(envelope.id)} already answered ${payload.message.id}`);
       return;
     }
     this.seen.add(payload.message.id);
@@ -83,9 +87,7 @@ class Agent {
 
   private async respond(payload: DiscussionMessageCreatedPayload): Promise<void> {
     const discussionID = payload.discussion.id;
-    console.log(
-      `discussion ${discussionID}: answering a turn from ${describeActor(payload.message.createdBy)}`,
-    );
+    console.log(`${dim(discussionID)} answering a turn from ${describeActor(payload.message.createdBy)}`);
 
     // Not fatal: the answer still matters even if the spinner never appears.
     await this.setStatus(discussionID, "IN_PROGRESS");
@@ -96,12 +98,12 @@ class Agent {
     try {
       answer = await this.runner.ask(discussionID, prompt);
     } catch (err) {
-      console.log(`discussion ${discussionID}: claude failed: ${message(err)}`);
+      console.log(`${dim(discussionID)} ${red("claude failed")} ${message(err)}`);
       const report = `I could not answer that. My runner failed with:\n\n\`\`\`\n${message(err)}\n\`\`\``;
       try {
         await this.client.sendDiscussionMessage(discussionID, report);
       } catch (sendErr) {
-        console.log(`discussion ${discussionID}: could not report the failure: ${message(sendErr)}`);
+        console.log(`${dim(discussionID)} ${red("could not report the failure")} ${message(sendErr)}`);
       }
       await this.setStatus(discussionID, "NEEDS_INPUT");
       return;
@@ -109,11 +111,9 @@ class Agent {
 
     try {
       const messageID = await this.client.sendDiscussionMessage(discussionID, answer);
-      console.log(
-        `discussion ${discussionID}: posted message ${messageID} (${answer.length} chars)`,
-      );
+      console.log(`${dim(discussionID)} ${green("answered")} ${messageID} (${answer.length} chars)`);
     } catch (err) {
-      console.log(`discussion ${discussionID}: could not post the answer: ${message(err)}`);
+      console.log(`${dim(discussionID)} ${red("could not post the answer")} ${message(err)}`);
       return;
     }
 
@@ -125,7 +125,7 @@ class Agent {
     try {
       await this.client.updateAgentStatus(discussionID, status);
     } catch (err) {
-      console.log(`discussion ${discussionID}: could not set ${status}: ${message(err)}`);
+      console.log(`${dim(discussionID)} ${dim(`could not set ${status}`)} ${message(err)}`);
     }
   }
 
@@ -157,27 +157,25 @@ class Agent {
       }
       return `${lines.join("\n")}\n\n${payload.message.markdown}`;
     } catch (err) {
-      console.log(
-        `discussion ${payload.discussion.id}: could not read thread context: ${message(err)}`,
-      );
+      console.log(`${dim(payload.discussion.id)} ${dim("could not read thread context")} ${message(err)}`);
       return payload.message.markdown;
     }
   }
 }
 
-export async function runServe(client: PlainClient, config: Config): Promise<void> {
+export async function runServe(
+  client: PlainClient,
+  config: Config,
+  provider: ProviderName,
+): Promise<void> {
   const me = await client.myMachineUser();
-  console.log(
-    `running as machine user ${me.id} (${me.fullName}), isCustomAgent=${me.isCustomAgent}`,
-  );
+  console.log(`${label("machine user")}${bold(me.id)} ${me.fullName}`);
   if (!me.isCustomAgent) {
-    console.log(
-      "WARNING: this machine user is not marked as a custom agent, so it will not appear in the picker",
-    );
+    console.log(fail("this machine user is not a custom agent, so it stays out of the picker"));
   }
 
-  ClaudeRunner.check();
-  const agent = new Agent(client, await ClaudeRunner.create(), me, config.secret);
+  const runner = await Runner.create(provider);
+  const agent = new Agent(client, runner, me, config.secret);
 
   Bun.serve({
     port: PORT,
@@ -189,11 +187,18 @@ export async function runServe(client: PlainClient, config: Config): Promise<voi
     fetch: () => new Response("not found\n", { status: 404 }),
   });
 
-  console.log(`listening on :${PORT}${WEBHOOK_PATH}`);
-  console.log("claude runs unsandboxed in auto mode with the whole filesystem in reach");
+  console.log(`${label("provider")}${bold(provider)}`);
+  console.log(`${label("listening on")}:${PORT}${WEBHOOK_PATH}`);
   if (config.publicURL !== "") {
-    console.log(`point your Plain webhook target at ${config.publicURL}${WEBHOOK_PATH}`);
+    console.log(`${label("webhook url")}${cyan(config.publicURL + WEBHOOK_PATH)}`);
   }
+  console.log(
+    warn(
+      provider === "claude"
+        ? "claude runs unsandboxed in auto mode with the whole filesystem in reach"
+        : `${provider} runs with whatever permissions its own config grants it`,
+    ),
+  );
 }
 
 function message(err: unknown): string {

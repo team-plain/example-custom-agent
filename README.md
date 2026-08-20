@@ -70,3 +70,24 @@ bun run serve
 ```
 
 Then open a thread in Plain, click Ask Sidekick, pick your agent and ask it something.
+
+## Using a different agent CLI
+
+Claude Code is the default. `--provider` swaps it for another CLI, which has to be installed and
+logged in already: this project holds no model API key of its own.
+
+```
+bun run serve --provider codex     # claude (default), codex, pi, opencode
+```
+
+Each CLI brings its own config and permission model, and that is where this gets sharp:
+
+- Claude Code and Codex are launched with approvals bypassed and their sandboxes off, so they can
+  touch anything on this machine. pi and opencode are given no such flags, so they run with whatever
+  their own config already allows, which may be wider or narrower.
+
+- Tools run wherever that CLI runs. One pointed at a remote backend never touches this machine, so
+  `hostname` will not be the host you expected.
+
+- Sessions are stored per provider in `workdir/sessions-<provider>.json`, because the ids are not
+  interchangeable. Switching provider mid-discussion starts that discussion over.
