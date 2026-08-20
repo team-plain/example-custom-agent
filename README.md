@@ -84,9 +84,4 @@ already, since this project holds no model API key of its own.
 bun run serve --provider codex     # claude (default), codex, pi, opencode
 ```
 
-The gotcha: only Claude Code and Codex are launched with approvals bypassed and their sandboxes off,
-so they can touch anything on this machine. pi and opencode run with whatever their own config
-already allows, and a CLI pointed at a remote backend never touches this machine at all.
-
-Sessions are stored per provider in `workdir/sessions-<provider>.json`, so switching provider
-mid-discussion starts that discussion over.
+Sessions are stored per provider in `sessions/sessions-<provider>.json`.
