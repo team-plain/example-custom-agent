@@ -15,40 +15,38 @@ const ROOT = join(import.meta.dir, "..");
 // a discussion instead; later turns resume a session that already carries it.
 const PROMPT_FILE = join(ROOT, "prompt.md");
 
-const WORKDIR = join(ROOT, "workdir");
+const SESSIONS_DIR = join(ROOT, "sessions");
 
 const TIMEOUT_MS = 180_000;
 
 /**
  * Maps a Plain discussion onto a CLI session so a discussion behaves like one conversation instead
- * of a series of unrelated questions. One file per provider: the ids are not interchangeable, and
- * handing a codex thread id to pi would fail every turn after a provider switch.
+ * of a series of unrelated questions. A file per discussion inside a directory per provider: two
+ * discussions being answered at once would otherwise race on one shared file, and a codex thread id
+ * means nothing to pi.
  */
 class SessionStore {
-  private ids: Record<string, string> = {};
+  private constructor(private readonly dir: string) {}
 
-  private constructor(private readonly path: string) {}
-
-  static async open(path: string): Promise<SessionStore> {
-    const store = new SessionStore(path);
-    const file = Bun.file(path);
-    if (await file.exists()) {
-      try {
-        store.ids = (await file.json()) as Record<string, string>;
-      } catch {
-        // A corrupt file is not worth failing a run over: the next turn just starts a new session.
-      }
-    }
-    return store;
+  static async open(dir: string): Promise<SessionStore> {
+    await mkdir(dir, { recursive: true });
+    return new SessionStore(dir);
   }
 
-  get(discussionID: string): string | undefined {
-    return this.ids[discussionID];
+  /** The discussion id arrives in a webhook, so it is scrubbed before it is used as a path. */
+  private path(discussionID: string): string {
+    return join(this.dir, `${discussionID.replace(/[^A-Za-z0-9_-]/g, "")}.txt`);
+  }
+
+  async get(discussionID: string): Promise<string | undefined> {
+    const file = Bun.file(this.path(discussionID));
+    if (!(await file.exists())) return undefined;
+    const id = (await file.text()).trim();
+    return id === "" ? undefined : id;
   }
 
   async put(discussionID: string, sessionID: string): Promise<void> {
-    this.ids[discussionID] = sessionID;
-    await Bun.write(this.path, `${JSON.stringify(this.ids, null, 2)}\n`);
+    await Bun.write(this.path(discussionID), `${sessionID}\n`);
   }
 }
 
@@ -67,18 +65,17 @@ export class Runner {
     const prompt = Bun.file(PROMPT_FILE);
     if (!(await prompt.exists())) throw new Error(`${PROMPT_FILE} is missing`);
 
-    await mkdir(WORKDIR, { recursive: true });
-    const sessions = await SessionStore.open(join(WORKDIR, `sessions-${name}.json`));
+    const sessions = await SessionStore.open(join(SESSIONS_DIR, name));
     return new Runner(name, provider, sessions, (await prompt.text()).trim());
   }
 
-  isResuming(discussionID: string): boolean {
-    return this.sessions.get(discussionID) !== undefined;
+  async isResuming(discussionID: string): Promise<boolean> {
+    return (await this.sessions.get(discussionID)) !== undefined;
   }
 
   /** Runs one turn against the discussion's session, resuming it when one already exists. */
   async ask(discussionID: string, prompt: string): Promise<string> {
-    const existing = this.sessions.get(discussionID);
+    const existing = await this.sessions.get(discussionID);
     const sessionID = existing ?? randomUUID();
     const full = existing || this.instructions === ""
       ? prompt

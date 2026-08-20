@@ -134,7 +134,7 @@ class Agent {
    * the same Claude session, which already holds that context.
    */
   private async buildPrompt(payload: DiscussionMessageCreatedPayload): Promise<string> {
-    if (this.runner.isResuming(payload.discussion.id)) {
+    if (await this.runner.isResuming(payload.discussion.id)) {
       return payload.message.markdown;
     }
     if (!payload.discussion.threadId) {

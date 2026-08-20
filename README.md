@@ -84,4 +84,4 @@ already, since this project holds no model API key of its own.
 bun run serve --provider codex     # claude (default), codex, pi, opencode
 ```
 
-Sessions are stored per provider in `sessions/sessions-<provider>.json`.
+Sessions are stored per provider, one file per discussion, in `sessions/<provider>/`.
