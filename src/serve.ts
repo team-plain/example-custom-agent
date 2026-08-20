@@ -124,6 +124,7 @@ class Agent {
   private async setStatus(discussionID: string, status: string): Promise<void> {
     try {
       await this.client.updateAgentStatus(discussionID, status);
+      console.log(`${dim(discussionID)} ${dim("status")} ${status}`);
     } catch (err) {
       console.log(`${dim(discussionID)} ${dim(`could not set ${status}`)} ${message(err)}`);
     }
