@@ -43,7 +43,9 @@ Written in TypeScript, run with [Bun](https://bun.sh).
    - `threadDiscussionMessage:create`
    - `threadDiscussion:read`
 
-2. Copy `.env.example` to `.env`. Fill in `PLAIN_API_KEY`, and `PLAIN_WEBHOOK_SECRET` from
+2. Copy `.env.example` to `.env`.
+
+   Fill in `PLAIN_API_KEY`, and `PLAIN_WEBHOOK_SECRET` from
    [Settings → Request Signing](https://app.plain.com/~/settings/request-signing/).
 
 3. Get a public https URL that reaches this process. To run locally, use `ngrok http 8081`.
