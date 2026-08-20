@@ -5,12 +5,17 @@ import { truncate } from "./config.ts";
 import type { Provider, ProviderName } from "./providers.ts";
 import { PROVIDERS } from "./providers.ts";
 
+// Both are resolved against the repo, not the working directory, because the agent is meant to be
+// started from whatever codebase you want it to look at. Relative paths would break the moment you
+// did that.
+const ROOT = join(import.meta.dir, "..");
+
 // Read from a file rather than baked in, so changing how the agent answers does not mean editing
 // TypeScript. Not every CLI has a system-prompt flag, so this is prepended to the first message of
 // a discussion instead; later turns resume a session that already carries it.
-const PROMPT_FILE = "./prompt.md";
+const PROMPT_FILE = join(ROOT, "prompt.md");
 
-const WORKDIR = "./workdir";
+const WORKDIR = join(ROOT, "workdir");
 
 const TIMEOUT_MS = 180_000;
 
