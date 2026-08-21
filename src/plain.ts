@@ -1,4 +1,8 @@
-import { API_URL, truncate } from "./config.ts";
+import { PlainClient as PlainSDK } from "@team-plain/graphql";
+import { API_URL } from "./config.ts";
+
+/** A stuck call must not hold a turn open, and no call here is slow enough to want longer. */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export type MachineUser = {
   id: string;
@@ -18,142 +22,100 @@ export type Discussion = {
   thread: { title: string; customer: { fullName: string } | null } | null;
 };
 
-type MutationError = { message: string; type: string; code: string } | null;
-
-function mutationError(error: MutationError): Error | null {
-  if (!error) return null;
-  return new Error(`plain rejected the call: ${error.message} (${error.code})`);
-}
+type ReturnedMutationError = {
+  message: string;
+  code: string;
+  fields?: { field: string; message: string }[];
+} | null;
 
 export class PlainClient {
-  constructor(private readonly apiKey: string) {}
+  private readonly sdk: PlainSDK;
 
-  private async request<T>(
-    query: string,
-    variables: Record<string, unknown> | null,
-    signal?: AbortSignal,
-  ): Promise<T> {
-    const res = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: signal ?? AbortSignal.timeout(30_000),
-    });
-
-    const raw = await res.text();
-
-    // Parse the envelope whatever the status code. A FORBIDDEN response is a 403 whose body still
-    // carries the real message; dumping the raw body instead re-encodes its quotes and makes the
-    // error unreadable to anything trying to match on it.
-    let envelope: { data?: T; errors?: { message: string }[] };
-    try {
-      envelope = JSON.parse(raw);
-    } catch {
-      throw new Error(
-        `plain api returned ${res.status} with unparseable json: ${truncate(raw, 300)}`,
-      );
-    }
-    if (envelope.errors?.length) {
-      throw new Error(`graphql error: ${envelope.errors[0]!.message}`);
-    }
-    if (!res.ok) {
-      throw new Error(`plain api returned ${res.status}: ${truncate(raw, 300)}`);
-    }
-    return envelope.data as T;
+  constructor(apiKey: string) {
+    this.sdk = new PlainSDK({ apiKey, apiUrl: API_URL });
   }
 
   /**
    * Identifies which machine user this API key belongs to. The agent needs its own id to tell the
    * discussions it owns from Sidekick's and from other agents'.
+   *
+   * `isCustomAgent` is the Custom agent toggle. Do not reach for `type` instead: it answers
+   * AI_AGENT or API_USER, which is a different question, and a working custom agent can be
+   * API_USER.
    */
   async myMachineUser(): Promise<MachineUser> {
-    const data = await this.request<{ myMachineUser: MachineUser | null }>(
-      "query { myMachineUser { id fullName isCustomAgent } }",
-      null,
-    );
-    if (!data.myMachineUser) throw new Error("this API key does not belong to a machine user");
-    return data.myMachineUser;
+    const me = await withTimeout(this.sdk.query.myMachineUser(), REQUEST_TIMEOUT_MS);
+    return { id: me.id, fullName: me.fullName, isCustomAgent: me.isCustomAgent };
   }
 
   async webhookTargets(): Promise<WebhookTarget[]> {
-    const data = await this.request<{
-      webhookTargets: { edges: { node: WebhookTarget }[] };
-    }>(
-      `query { webhookTargets(first: 100) { edges { node {
-        url version isEnabled eventSubscriptions { eventType }
-      } } } }`,
-      null,
+    const page = await withTimeout(
+      this.sdk.query.webhookTargets({ first: 100 }),
+      REQUEST_TIMEOUT_MS,
     );
-    return data.webhookTargets.edges.map((edge) => edge.node);
+    return page.nodes.map((target) => ({
+      url: target.url,
+      version: target.version,
+      isEnabled: target.isEnabled,
+      eventSubscriptions: target.eventSubscriptions,
+    }));
   }
 
   /**
    * Only used for the extra context handed to the model on the first turn of a discussion, so a
-   * failure here is never fatal to answering.
+   * failure here is never fatal to answering. `thread` and `customer` are lazy getters, so this
+   * costs a round trip each rather than arriving with the discussion.
    */
-  async discussion(discussionID: string, signal?: AbortSignal): Promise<Discussion> {
-    const data = await this.request<{ discussion: Discussion | null }>(
-      `query ($discussionId: ID!) {
-        discussion(discussionId: $discussionId) {
-          id
-          thread { title customer { fullName } }
-        }
-      }`,
-      { discussionId: discussionID },
-      signal,
+  async discussion(discussionID: string, timeoutMS = REQUEST_TIMEOUT_MS): Promise<Discussion> {
+    return withTimeout(
+      (async () => {
+        const discussion = await this.sdk.query.discussion({ discussionId: discussionID });
+        const thread = await discussion.thread;
+        if (!thread) return { id: discussion.id, thread: null };
+
+        const customer = await thread.customer;
+        return {
+          id: discussion.id,
+          thread: {
+            title: thread.title,
+            customer: customer ? { fullName: customer.fullName } : null,
+          },
+        };
+      })(),
+      timeoutMS,
     );
-    if (!data.discussion) throw new Error(`discussion ${discussionID} not found`);
-    return data.discussion;
   }
 
   async sendDiscussionMessage(discussionID: string, markdown: string): Promise<string> {
-    const data = await this.request<{
-      sendDiscussionMessage: {
-        discussionMessage: { id: string } | null;
-        error: MutationError;
-      };
-    }>(
-      `mutation ($input: SendDiscussionMessageInput!) {
-        sendDiscussionMessage(input: $input) {
-          discussionMessage { id }
-          error { message type code }
-        }
-      }`,
-      { input: { discussionId: discussionID, markdownContent: markdown } },
+    const result = await withTimeout(
+      this.sdk.mutation.sendDiscussionMessage({
+        input: { discussionId: discussionID, markdownContent: markdown },
+      }),
+      REQUEST_TIMEOUT_MS,
     );
-    const failure = mutationError(data.sendDiscussionMessage.error);
-    if (failure) throw failure;
-    if (!data.sendDiscussionMessage.discussionMessage) {
-      throw new Error("sendDiscussionMessage returned no message");
-    }
-    return data.sendDiscussionMessage.discussionMessage.id;
+
+    assertNoMutationError("sendDiscussionMessage", result.error ?? null);
+    if (!result.discussionMessage) throw new Error("sendDiscussionMessage returned no message");
+    return result.discussionMessage.id;
   }
 
   /**
    * Not optional housekeeping: Plain runs no session for a custom agent, so without these calls the
    * discussion shows as permanently idle. Settling on IDLE is also what marks the discussion unread
    * so the answer surfaces.
+   *
+   * Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`, which takes a
+   * thread id and sets the status somewhere else entirely.
    */
-  async updateAgentStatus(discussionID: string, status: string): Promise<void> {
-    const data = await this.request<{
-      updateDiscussionAgentStatus: {
-        discussion: { id: string; agentStatus: string } | null;
-        error: MutationError;
-      };
-    }>(
-      `mutation ($input: UpdateDiscussionAgentStatusInput!) {
-        updateDiscussionAgentStatus(input: $input) {
-          discussion { id agentStatus }
-          error { message type code }
-        }
-      }`,
-      { input: { discussionId: discussionID, agentStatus: status } },
+  async updateAgentStatus(discussionID: string, status: "IN_PROGRESS" | "IDLE" | "NEEDS_INPUT"): Promise<void> {
+    const result = await withTimeout(
+      this.sdk.mutation.updateDiscussionAgentStatus({
+        input: { discussionId: discussionID, agentStatus: status },
+      }),
+      REQUEST_TIMEOUT_MS,
     );
-    const failure = mutationError(data.updateDiscussionAgentStatus.error);
-    if (failure) throw failure;
+
+    assertNoMutationError("updateDiscussionAgentStatus", result.error ?? null);
   }
 
   /**
@@ -161,28 +123,51 @@ export class PlainClient {
    * so callers must handle the failure rather than depend on it.
    */
   async myApiKeyPermissions(): Promise<string[]> {
-    const data = await this.request<{
-      myMachineUser: {
-        apiKeys: {
-          edges: { node: { id: string; isDeleted: boolean; permissions: string[] } }[];
-        };
-      } | null;
-    }>(
-      "query { myMachineUser { apiKeys(first: 50) { edges { node { id isDeleted permissions } } } } }",
-      null,
+    const keys = await withTimeout(
+      (async () => {
+        const me = await this.sdk.query.myMachineUser();
+        return me.apiKeys({ first: 50 });
+      })(),
+      REQUEST_TIMEOUT_MS,
     );
-    if (!data.myMachineUser) throw new Error("this API key does not belong to a machine user");
 
     // The API never reveals which key authenticated the request, and a machine user may hold
     // several. Only a single live key makes the answer unambiguous.
-    const live = data.myMachineUser.apiKeys.edges
-      .map((edge) => edge.node)
-      .filter((node) => !node.isDeleted);
+    const live = keys.nodes.filter((key) => !key.isDeleted);
     if (live.length !== 1) {
       throw new Error(
         `this machine user has ${live.length} live API keys, so the permissions of the one in use cannot be identified`,
       );
     }
     return live[0]!.permissions;
+  }
+}
+
+/**
+ * Plain answers a refused mutation with HTTP 200 and an `error` object inside `data`. The SDK passes
+ * that payload straight back rather than throwing, so every mutation has to check it.
+ */
+function assertNoMutationError(name: string, error: ReturnedMutationError): void {
+  if (!error) return;
+
+  const fields = error.fields?.map((field) => `${field.field}: ${field.message}`).join(", ");
+  const detail = fields ? ` [${fields}]` : "";
+  throw new Error(`plain rejected ${name}: ${error.message} (${error.code})${detail}`);
+}
+
+/**
+ * The SDK client takes no AbortSignal, so this only stops waiting. The request itself runs on until
+ * Plain answers it.
+ */
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`plain did not answer within ${ms}ms`)), ms);
+  });
+
+  try {
+    return await Promise.race([work, expiry]);
+  } finally {
+    clearTimeout(timer);
   }
 }

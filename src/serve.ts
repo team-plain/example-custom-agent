@@ -1,4 +1,4 @@
-import { DISCUSSION_MESSAGE_CREATED_EVENT, PORT, WEBHOOK_PATH, type Config } from "./config.ts";
+import { PORT, WEBHOOK_PATH, type Config } from "./config.ts";
 import type { ProviderName } from "./providers.ts";
 import { bold, cyan, dim, fail, green, label, red, warn } from "./ui.ts";
 import { Runner } from "./runner.ts";
@@ -7,9 +7,10 @@ import {
   SIGNATURE_HEADER,
   classify,
   describeActor,
-  verifySignature,
+  discussionMessage,
+  verify,
   type DiscussionMessageCreatedPayload,
-  type WebhookEnvelope,
+  type Envelope,
 } from "./webhook.ts";
 
 const MAX_BODY_BYTES = 4 << 20;
@@ -35,19 +36,14 @@ class Agent {
       return new Response("body too large\n", { status: 413 });
     }
 
+    let envelope: Envelope;
     try {
-      verifySignature(body, req.headers.get(SIGNATURE_HEADER) ?? "", this.secret);
+      envelope = verify(body, req.headers.get(SIGNATURE_HEADER) ?? "", this.secret);
     } catch (err) {
+      // Bad signature, stale delivery, or a PlainWebhookVersionMismatchError, which means the
+      // webhook target and the installed SDK disagree on the version. Retrying fixes none of them.
       console.log(`${red("rejected")} ${message(err)}`);
-      return new Response("invalid signature\n", { status: 401 });
-    }
-
-    let envelope: WebhookEnvelope;
-    try {
-      envelope = JSON.parse(body) as WebhookEnvelope;
-    } catch (err) {
-      console.log(`${red("rejected")} body is not valid json: ${message(err)}`);
-      return new Response("invalid json\n", { status: 400 });
+      return new Response("rejected\n", { status: 401 });
     }
 
     // Answer before doing the work. Plain retries anything that is not a 2xx, and a Claude turn
@@ -56,17 +52,10 @@ class Agent {
     return new Response("ok\n");
   }
 
-  private async dispatch(envelope: WebhookEnvelope): Promise<void> {
-    if (envelope.type !== DISCUSSION_MESSAGE_CREATED_EVENT) {
+  private async dispatch(envelope: Envelope): Promise<void> {
+    const payload = discussionMessage(envelope);
+    if (!payload) {
       console.log(`${dim(envelope.id)} ignoring ${envelope.type}`);
-      return;
-    }
-
-    const payload = envelope.payload as DiscussionMessageCreatedPayload;
-    if (!payload?.discussion || !payload.message) {
-      console.log(
-        `${dim(envelope.id)} payload did not match ${DISCUSSION_MESSAGE_CREATED_EVENT}`,
-      );
       return;
     }
 
@@ -121,7 +110,10 @@ class Agent {
     await this.setStatus(discussionID, "IDLE");
   }
 
-  private async setStatus(discussionID: string, status: string): Promise<void> {
+  private async setStatus(
+    discussionID: string,
+    status: "IN_PROGRESS" | "IDLE" | "NEEDS_INPUT",
+  ): Promise<void> {
     try {
       await this.client.updateAgentStatus(discussionID, status);
       console.log(`${dim(discussionID)} ${dim("status")} ${status}`);
@@ -143,10 +135,7 @@ class Agent {
     }
 
     try {
-      const discussion = await this.client.discussion(
-        payload.discussion.id,
-        AbortSignal.timeout(15_000),
-      );
+      const discussion = await this.client.discussion(payload.discussion.id, 15_000);
       if (!discussion.thread) return payload.message.markdown;
 
       const lines = [

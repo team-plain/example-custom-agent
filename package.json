@@ -1,16 +1,20 @@
 {
   "name": "example-custom-agent",
   "version": "1.0.0",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
   "private": true,
-  "type": "module",
   "scripts": {
     "serve": "bun run src/index.ts serve",
     "check": "bun run src/index.ts check",
     "help": "bun run src/index.ts help",
     "typecheck": "tsc --noEmit"
   },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.6.0"
+  "type": "module",
+  "dependencies": {
+    "@team-plain/graphql": "^1.4.0",
+    "@team-plain/webhooks": "^1.7.1"
   }
 }

@@ -2,6 +2,67 @@
 
 This document outlines the protocol details that this agent relies on. Use this to understand how the mechanism work and port it to any language or setup as needed.
 
+Every step is shown twice: **with the SDK** ([team-plain/sdk](https://github.com/team-plain/sdk),
+what this project uses) and **by hand** over raw HTTP, which is what you need in any other language.
+
+## The SDK
+
+[team-plain/sdk](https://github.com/team-plain/sdk) is a monorepo of independently published
+packages. This project uses two of them:
+
+| Package | Version | What it is |
+| --- | --- | --- |
+| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.4.0 | Typed client with generated model classes |
+| [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.7.1 | Webhook parsing and signature verification |
+| [`@team-plain/ui-components`](https://www.npmjs.com/package/@team-plain/ui-components) | 5.0.0 | UI component builders, not needed here |
+
+```bash
+bun add @team-plain/graphql @team-plain/webhooks
+```
+
+```ts
+import { PlainClient } from "@team-plain/graphql";
+
+const client = new PlainClient({ apiKey: process.env.PLAIN_API_KEY! });
+
+await client.query.myMachineUser();                              // queries under .query
+await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
+```
+
+**Use `@team-plain/graphql` 1.4.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** Everything a
+custom agent needs landed in those versions. On anything older you have to hand-write the GraphQL and
+the HMAC, because `updateDiscussionAgentStatus`, `MachineUser.isCustomAgent`, and the
+`discussion.message_created` webhook schema are all absent.
+
+Do not confuse either with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
+the previous generation. That package has no discussion operations at all.
+
+### How much of this the SDK covers
+
+Nearly all of it, on current versions:
+
+| What you need | Covered by |
+| --- | --- |
+| Post the answer | `mutation.sendDiscussionMessage` |
+| Report agent status | `mutation.updateDiscussionAgentStatus` |
+| Identify the machine user, Custom agent toggle included | `query.myMachineUser` → `.id`, `.fullName`, `.isCustomAgent` |
+| Read the discussion and its thread | `query.discussion`, then the lazy `.thread` and `.customer` |
+| List webhook targets with their version | `query.webhookTargets` |
+| Read the key's own permissions | `query.myMachineUser` then `.apiKeys()` |
+| Validate a webhook body and narrow its type | `parsePlainWebhook` |
+| Verify the webhook signature | `verifyPlainWebhook` |
+| Decide whether to answer | Nothing. That logic is yours, see [step 3](#3-decide-whether-to-answer) |
+
+What the typed client earns you: generated types for every input and payload, lazy relation getters
+(`discussion.thread`, `thread.customer`), pagination via `PlainConnection`, and thrown errors you can
+catch by class, `AuthenticationError`, `ForbiddenError`, `NetworkError`, `RateLimitError`,
+`InternalError`, and `PlainGraphQLError`, which carries the GraphQL `errors` array.
+
+If you ever do need an operation the generated client lacks, `PlainGraphQLClient` sends any document
+you hand it through the same transport and error classes. It takes a `TypedDocumentNode` rather than
+a string, so parse the document once with `parse` from `graphql`. Nothing in this project needs it
+any more.
+
 ## What you need in Plain
 
 A machine user with an API key, the Custom agent toggle on, and a webhook target. See the
@@ -45,11 +106,45 @@ including the ones your own agent writes. These are the fields that matter:
 `discussion.agent.id` is the machine user the discussion was opened against, and
 `message.markdown` is what the person typed. That is your prompt.
 
+Two things this example trims. `discussion.agent` is a full machine user object, not just an `id`,
+and the real delivery also carries `webhookMetadata.webhookTargetId`, `webhookDeliveryAttemptId`,
+`webhookDeliveryAttemptNumber`, and `webhookDeliveryAttemptTimestamp`. The attempt number tells you a
+retry from a first try; the timestamp is your replay guard.
+
+`DiscussionMessageCreatedPublicEventPayload` from `@team-plain/webhooks` is the generated type for
+all of this, so you do not need to restate it.
+
 ## 2. Verify the signature
 
 Plain signs the body with your workspace secret ([Settings → Request
 Signing](https://app.plain.com/~/settings/request-signing/)) and puts a hex SHA-256 HMAC in the
 `Plain-Request-Signature` header.
+
+`verifyPlainWebhook` does the whole job in one call: constant-time HMAC, schema validation, and a
+replay window. This is all [`src/webhook.ts`](src/webhook.ts) does.
+
+```ts
+import { verifyPlainWebhook } from "@team-plain/webhooks";
+
+const result = verifyPlainWebhook(rawBody, signatureHeader, secret);
+if (result.error) throw result.error;
+
+const envelope = result.data;  // union narrowed on envelope.type
+```
+
+Three distinct rejections come back through that one `error`, and it is worth logging which:
+`PlainWebhookSignatureVerificationError` for a bad signature or a delivery outside the five-minute
+replay window, `PlainWebhookPayloadError` for a body that does not match the schema, and
+`PlainWebhookVersionMismatchError` when the webhook target and the installed SDK disagree on the
+webhook version. Only the first is an attack; the last is a deployment problem, and retrying never
+fixes it.
+
+**Use 1.7.1 or newer for this.** Earlier versions compared the signature with `!==` rather than in
+constant time. If you are pinned below that, do the HMAC yourself with `timingSafeEqual`, use
+`parsePlainWebhook` for the schema, and reject a `webhookDeliveryAttemptTimestamp` older than five
+minutes yourself.
+
+**By hand, in any language:**
 
 ```bash
 printf '%s' "$RAW_BODY" | openssl dgst -sha256 -hmac "$PLAIN_WEBHOOK_SECRET" -hex
@@ -71,7 +166,27 @@ Answer only when all of these hold:
 
 Your own replies arrive back as webhooks, so this filter is not optional.
 
+The SDK has nothing for this step, and it is the one place a mistake is self-inflicted rather than
+reported. `classify` in [`src/webhook.ts`](src/webhook.ts) is the whole of it.
+
 ## 4. Post your answer
+
+**With the SDK:**
+
+```ts
+const result = await client.mutation.sendDiscussionMessage({
+  input: {
+    discussionId: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    markdownContent: "The invoice failed because the card was declined.",
+  },
+});
+
+// Caution: a refused mutation does NOT throw. Read on.
+if (result.error) throw new Error(result.error.message);
+const messageID = result.discussionMessage?.id;
+```
+
+**By hand:**
 
 ```bash
 curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
@@ -90,13 +205,43 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 {"data":{"sendDiscussionMessage":{"discussionMessage":null,"error":{"message":"There was a validation error.","type":"VALIDATION","code":"not_found"}}}}
 ```
 
-Errors come back inside `data`, with HTTP 200. Check `error` on every mutation rather than the
-status code.
+### MUTATION ERRORS
+
+**Caution: check `error` on every mutation, with or without the SDK.** Plain answers a refused
+mutation with HTTP 200 and an `error` object inside `data`. This is deliberate in the SDK, mutation
+errors are data rather than exceptions, so a mutation that did nothing looks like one that worked
+unless you look. The error classes cover transport and auth failures, not this.
+
+Read `error.fields`, not just `error.message`. The message is generic, the fields say what was
+actually wrong:
+
+```
+plain rejected sendDiscussionMessage: There was a validation error. (not_found)
+  [threadDiscussion: Thread discussion not found: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV".]
+```
+
+[`src/plain.ts`](src/plain.ts) does this once in `assertNoMutationError` and calls it from every
+mutation.
 
 ## 5. Report status
 
 Plain runs no session for a custom agent, so nothing reports progress unless you do. Without these
 calls the discussion looks permanently idle.
+
+**With the SDK:**
+
+```ts
+const result = await client.mutation.updateDiscussionAgentStatus({
+  input: { discussionId: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV", agentStatus: "IN_PROGRESS" },
+});
+if (result.error) throw new Error(result.error.message);
+```
+
+**Caution: this is `updateDiscussionAgentStatus`, not `updateThreadAgentStatus`.** The SDK ships both.
+The other one takes a `threadId` and sets the status on the thread, which is a different thing and
+will not make your discussion stop looking idle.
+
+**By hand:**
 
 ```bash
 curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
@@ -117,6 +262,18 @@ The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on
 
 Identify which machine user your key is, so you can compare it against `discussion.agent.id`:
 
+```ts
+const me = await client.query.myMachineUser();
+// me.id, me.fullName, me.isCustomAgent
+```
+
+**Caution: read `isCustomAgent`, never `type`.** `MachineUserType` answers `AI_AGENT` or `API_USER`,
+which is a different question from the Custom agent toggle. Checked against a live workspace, this
+project's own machine user answers `type: "API_USER"` while `isCustomAgent` is `true`. Read `type`
+and you will report a working custom agent as broken.
+
+**By hand:**
+
 ```bash
 curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
   -H "Authorization: Bearer $PLAIN_API_KEY" -H "Content-Type: application/json" \
@@ -130,7 +287,17 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 `isCustomAgent: false` means it will never appear in the Ask Sidekick picker, whatever else you get
 right.
 
-Read the thread the discussion hangs off, for context on the first turn:
+Read the thread the discussion hangs off, for context on the first turn.
+
+**With the SDK.** `thread` and `customer` are lazy getters, so each one is its own round trip:
+
+```ts
+const discussion = await client.query.discussion({ discussionId: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV" });
+const thread = await discussion.thread;
+const customer = thread ? await thread.customer : undefined;
+```
+
+**By hand, which gets all of it in one:**
 
 ```bash
 curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
@@ -141,11 +308,20 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
   }'
 ```
 
+A missing discussion throws `Error: discussion not found` through the SDK, rather than returning
+null.
+
 ## Gotchas
 
 **Pin the webhook target to `2026-08-19` or later.** `discussion.message_created` was added in that
 version. A target on an older one is silently never sent the event, and nothing anywhere reports an
 error.
+
+**The webhooks package pins exactly one webhook version, so it and your target move together.**
+`@team-plain/webhooks` validates `webhookMetadata.webhookTargetVersion` against a single literal
+baked in at build time, 1.7.1 being `2026-08-19`. If the two ever drift, every delivery fails with
+`PlainWebhookVersionMismatchError`, whatever the event. Upgrade the package and the target in the same
+change, and treat that error as a version-drift alarm rather than a bad payload.
 
 **Return 200 immediately, then work.** Plain retries anything that is not a 2xx, and a real answer
 takes far longer than the delivery timeout. Answer the HTTP request first, do the work after.
@@ -155,3 +331,20 @@ takes far longer than the delivery timeout. Answer the HTTP request first, do th
 **Keep one model session per discussion, not per message.** Store the discussion id against whatever
 session handle your model gives you and resume it on the next turn, or every message starts from
 nothing and the conversation has no memory.
+
+**Nothing in the SDK takes an AbortSignal.** `PlainClient` and `PlainGraphQLClient` accept only
+`apiKey` and `apiUrl`. There is no timeout, no signal, and no fetch override, so a hung request
+waits forever unless you race it. [`src/plain.ts`](src/plain.ts) does that in `withTimeout`, and note
+what it cannot do: the race stops you waiting, the request itself keeps running.
+
+**On webhooks below 1.7.0, most generated types are not importable.** The barrel export was a
+hand-written name list that had fallen 83 types behind the generated file, so `Actor`, `Thread`,
+`Customer` and others shipped in the build but could not be imported. 1.7.0 re-exports all of them,
+and renames the Slack reaction type from `Items` to `SlackReaction`. On an older version, reach
+through a type that is exported, e.g.
+`DiscussionMessageCreatedPublicEventPayload["message"]["createdBy"]` for `Actor`.
+
+**Both the SDK and raw HTTP default to the UK API,
+`https://core-api.uk.plain.com/graphql/v1`.** Pass `apiUrl` if your workspace is elsewhere.
+
+**The SDK asks for Node 24+.** It runs fine on Bun 1.2.10, which is what this project uses.

@@ -1,16 +1,15 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  verifyPlainWebhook,
+  type Actor,
+  type DiscussionMessageCreatedPublicEventPayload,
+  type WebhooksSchemaDefinition,
+} from "@team-plain/webhooks";
 import { DISCUSSION_MESSAGE_CREATED_EVENT } from "./config.ts";
-import type { MachineUser } from "./plain.ts";
 
 export const SIGNATURE_HEADER = "Plain-Request-Signature";
 
-export type Actor = {
-  actorType: "user" | "machineUser" | "customer" | "system" | string;
-  userId?: string;
-  machineUserId?: string;
-  customerId?: string;
-  system?: string;
-};
+export type Envelope = WebhooksSchemaDefinition;
+export type DiscussionMessageCreatedPayload = DiscussionMessageCreatedPublicEventPayload;
 
 export function describeActor(actor: Actor): string {
   switch (actor.actorType) {
@@ -27,47 +26,21 @@ export function describeActor(actor: Actor): string {
   }
 }
 
-export type WebhookEnvelope = {
-  id: string;
-  type: string;
-  timestamp: string;
-  workspaceId: string;
-  webhookMetadata: { webhookTargetVersion: string };
-  payload: unknown;
-};
-
-export type DiscussionMessageCreatedPayload = {
-  eventType: string;
-  discussion: {
-    id: string;
-    type: string;
-    agent: Pick<MachineUser, "id"> | null;
-    status: string;
-    threadId: string | null;
-  };
-  message: {
-    id: string;
-    type: string;
-    markdown: string;
-    createdBy: Actor;
-    createdAt: string;
-  };
-};
-
 /**
- * Recomputes the hex SHA-256 HMAC over the raw body, which is how Plain signs every outbound
- * webhook. It must run on the untouched bytes: re-encoding the JSON first breaks it.
+ * Verifies the HMAC, validates the body against the schema for the webhook version the installed
+ * SDK was built from, and rejects a delivery outside the replay window. A version mismatch surfaces
+ * here, which is the only place that tells you the webhook target and the SDK have drifted apart.
  */
-export function verifySignature(rawBody: string, signature: string, secret: string): void {
-  if (signature === "") {
-    throw new Error(`request carried no ${SIGNATURE_HEADER} header`);
-  }
-  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
-  const given = Buffer.from(signature);
-  const want = Buffer.from(expected);
-  if (given.length !== want.length || !timingSafeEqual(given, want)) {
-    throw new Error("signature does not match the workspace HMAC secret");
-  }
+export function verify(rawBody: string, signature: string, secret: string): Envelope {
+  const result = verifyPlainWebhook(rawBody, signature, secret);
+  if (result.error) throw result.error;
+  return result.data;
+}
+
+/** Narrows a validated envelope to the one event this agent answers. */
+export function discussionMessage(envelope: Envelope): DiscussionMessageCreatedPayload | null {
+  if (envelope.payload.eventType !== DISCUSSION_MESSAGE_CREATED_EVENT) return null;
+  return envelope.payload;
 }
 
 /**
@@ -80,9 +53,6 @@ export function classify(
 ): { answer: true } | { answer: false; reason: string } {
   const skip = (reason: string) => ({ answer: false as const, reason });
 
-  if (payload.eventType !== DISCUSSION_MESSAGE_CREATED_EVENT) {
-    return skip(`not a discussion message event: ${payload.eventType}`);
-  }
   if (payload.discussion.type !== "AGENT_SESSION") {
     return skip(`discussion is a ${payload.discussion.type} channel, not an agent session`);
   }
