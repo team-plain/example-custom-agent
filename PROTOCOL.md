@@ -29,39 +29,10 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.4.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** Everything a
-custom agent needs landed in those versions. On anything older you have to hand-write the GraphQL and
-the HMAC, because `updateDiscussionAgentStatus`, `MachineUser.isCustomAgent`, and the
-`discussion.message_created` webhook schema are all absent.
+**Use `@team-plain/graphql` 1.4.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.**.
 
-Do not confuse either with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
-the previous generation. That package has no discussion operations at all.
-
-### How much of this the SDK covers
-
-Nearly all of it, on current versions:
-
-| What you need | Covered by |
-| --- | --- |
-| Post the answer | `mutation.sendDiscussionMessage` |
-| Report agent status | `mutation.updateDiscussionAgentStatus` |
-| Identify the machine user, Custom agent toggle included | `query.myMachineUser` → `.id`, `.fullName`, `.isCustomAgent` |
-| Read the discussion and its thread | `query.discussion`, then the lazy `.thread` and `.customer` |
-| List webhook targets with their version | `query.webhookTargets` |
-| Read the key's own permissions | `query.myMachineUser` then `.apiKeys()` |
-| Validate a webhook body and narrow its type | `parsePlainWebhook` |
-| Verify the webhook signature | `verifyPlainWebhook` |
-| Decide whether to answer | Nothing. That logic is yours, see [step 3](#3-decide-whether-to-answer) |
-
-What the typed client earns you: generated types for every input and payload, lazy relation getters
-(`discussion.thread`, `thread.customer`), pagination via `PlainConnection`, and thrown errors you can
-catch by class, `AuthenticationError`, `ForbiddenError`, `NetworkError`, `RateLimitError`,
-`InternalError`, and `PlainGraphQLError`, which carries the GraphQL `errors` array.
-
-If you ever do need an operation the generated client lacks, `PlainGraphQLClient` sends any document
-you hand it through the same transport and error classes. It takes a `TypedDocumentNode` rather than
-a string, so parse the document once with `parse` from `graphql`. Nothing in this project needs it
-any more.
+Do not confuse with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
+the previous generation of the SDK. That package is deprecated.
 
 ## What you need in Plain
 
@@ -106,8 +77,7 @@ including the ones your own agent writes. These are the fields that matter:
 `discussion.agent.id` is the machine user the discussion was opened against, and
 `message.markdown` is what the person typed. That is your prompt.
 
-Two things this example trims. `discussion.agent` is a full machine user object, not just an `id`,
-and the real delivery also carries `webhookMetadata.webhookTargetId`, `webhookDeliveryAttemptId`,
+The real delivery also carries `webhookMetadata.webhookTargetId`, `webhookDeliveryAttemptId`,
 `webhookDeliveryAttemptNumber`, and `webhookDeliveryAttemptTimestamp`. The attempt number tells you a
 retry from a first try; the timestamp is your replay guard.
 
@@ -131,18 +101,6 @@ if (result.error) throw result.error;
 
 const envelope = result.data;  // union narrowed on envelope.type
 ```
-
-Three distinct rejections come back through that one `error`, and it is worth logging which:
-`PlainWebhookSignatureVerificationError` for a bad signature or a delivery outside the five-minute
-replay window, `PlainWebhookPayloadError` for a body that does not match the schema, and
-`PlainWebhookVersionMismatchError` when the webhook target and the installed SDK disagree on the
-webhook version. Only the first is an attack; the last is a deployment problem, and retrying never
-fixes it.
-
-**Use 1.7.1 or newer for this.** Earlier versions compared the signature with `!==` rather than in
-constant time. If you are pinned below that, do the HMAC yourself with `timingSafeEqual`, use
-`parsePlainWebhook` for the schema, and reject a `webhookDeliveryAttemptTimestamp` older than five
-minutes yourself.
 
 **By hand, in any language:**
 
@@ -181,7 +139,7 @@ const result = await client.mutation.sendDiscussionMessage({
   },
 });
 
-// Caution: a refused mutation does NOT throw. Read on.
+// Caution: a refused mutation does NOT throw.
 if (result.error) throw new Error(result.error.message);
 const messageID = result.discussionMessage?.id;
 ```
@@ -205,24 +163,6 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 {"data":{"sendDiscussionMessage":{"discussionMessage":null,"error":{"message":"There was a validation error.","type":"VALIDATION","code":"not_found"}}}}
 ```
 
-### MUTATION ERRORS
-
-**Caution: check `error` on every mutation, with or without the SDK.** Plain answers a refused
-mutation with HTTP 200 and an `error` object inside `data`. This is deliberate in the SDK, mutation
-errors are data rather than exceptions, so a mutation that did nothing looks like one that worked
-unless you look. The error classes cover transport and auth failures, not this.
-
-Read `error.fields`, not just `error.message`. The message is generic, the fields say what was
-actually wrong:
-
-```
-plain rejected sendDiscussionMessage: There was a validation error. (not_found)
-  [threadDiscussion: Thread discussion not found: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV".]
-```
-
-[`src/plain.ts`](src/plain.ts) does this once in `assertNoMutationError` and calls it from every
-mutation.
-
 ## 5. Report status
 
 Plain runs no session for a custom agent, so nothing reports progress unless you do. Without these
@@ -236,10 +176,6 @@ const result = await client.mutation.updateDiscussionAgentStatus({
 });
 if (result.error) throw new Error(result.error.message);
 ```
-
-**Caution: this is `updateDiscussionAgentStatus`, not `updateThreadAgentStatus`.** The SDK ships both.
-The other one takes a `threadId` and sets the status on the thread, which is a different thing and
-will not make your discussion stop looking idle.
 
 **By hand:**
 
@@ -267,11 +203,6 @@ const me = await client.query.myMachineUser();
 // me.id, me.fullName, me.isCustomAgent
 ```
 
-**Caution: read `isCustomAgent`, never `type`.** `MachineUserType` answers `AI_AGENT` or `API_USER`,
-which is a different question from the Custom agent toggle. Checked against a live workspace, this
-project's own machine user answers `type: "API_USER"` while `isCustomAgent` is `true`. Read `type`
-and you will report a working custom agent as broken.
-
 **By hand:**
 
 ```bash
@@ -283,9 +214,6 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 ```json
 {"data":{"myMachineUser":{"id":"mu_01ARZ3NDEKTSV4RRFFQ69G5FAV","fullName":"your agent","isCustomAgent":true}}}
 ```
-
-`isCustomAgent: false` means it will never appear in the Ask Sidekick picker, whatever else you get
-right.
 
 Read the thread the discussion hangs off, for context on the first turn.
 
