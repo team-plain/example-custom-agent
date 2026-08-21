@@ -236,20 +236,11 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
   }'
 ```
 
-A missing discussion throws `Error: discussion not found` through the SDK, rather than returning
-null.
-
 ## Gotchas
 
 **Pin the webhook target to `2026-08-19` or later.** `discussion.message_created` was added in that
 version. A target on an older one is silently never sent the event, and nothing anywhere reports an
 error.
-
-**The webhooks package pins exactly one webhook version, so it and your target move together.**
-`@team-plain/webhooks` validates `webhookMetadata.webhookTargetVersion` against a single literal
-baked in at build time, 1.7.1 being `2026-08-19`. If the two ever drift, every delivery fails with
-`PlainWebhookVersionMismatchError`, whatever the event. Upgrade the package and the target in the same
-change, and treat that error as a version-drift alarm rather than a bad payload.
 
 **Return 200 immediately, then work.** Plain retries anything that is not a 2xx, and a real answer
 takes far longer than the delivery timeout. Answer the HTTP request first, do the work after.
@@ -259,18 +250,6 @@ takes far longer than the delivery timeout. Answer the HTTP request first, do th
 **Keep one model session per discussion, not per message.** Store the discussion id against whatever
 session handle your model gives you and resume it on the next turn, or every message starts from
 nothing and the conversation has no memory.
-
-**Nothing in the SDK takes an AbortSignal.** `PlainClient` and `PlainGraphQLClient` accept only
-`apiKey` and `apiUrl`. There is no timeout, no signal, and no fetch override, so a hung request
-waits forever unless you race it. [`src/plain.ts`](src/plain.ts) does that in `withTimeout`, and note
-what it cannot do: the race stops you waiting, the request itself keeps running.
-
-**On webhooks below 1.7.0, most generated types are not importable.** The barrel export was a
-hand-written name list that had fallen 83 types behind the generated file, so `Actor`, `Thread`,
-`Customer` and others shipped in the build but could not be imported. 1.7.0 re-exports all of them,
-and renames the Slack reaction type from `Items` to `SlackReaction`. On an older version, reach
-through a type that is exported, e.g.
-`DiscussionMessageCreatedPublicEventPayload["message"]["createdBy"]` for `Actor`.
 
 **Both the SDK and raw HTTP default to the UK API,
 `https://core-api.uk.plain.com/graphql/v1`.** Pass `apiUrl` if your workspace is elsewhere.
