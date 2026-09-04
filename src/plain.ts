@@ -107,7 +107,7 @@ export class PlainClient {
    * Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`, which takes a
    * thread id and sets the status somewhere else entirely.
    */
-  async updateAgentStatus(discussionID: string, status: "IN_PROGRESS" | "IDLE" | "NEEDS_INPUT"): Promise<void> {
+  async updateAgentStatus(discussionID: string, status: "IN_PROGRESS" | "IDLE"): Promise<void> {
     const result = await withTimeout(
       this.sdk.mutation.updateDiscussionAgentStatus({
         input: { discussionId: discussionID, agentStatus: status },
@@ -116,6 +116,22 @@ export class PlainClient {
     );
 
     assertNoMutationError("updateDiscussionAgentStatus", result.error ?? null);
+  }
+
+  /**
+   * Moves the discussion itself between OPEN and RESOLVED. This is the conversation's state, not the
+   * agent's: `updateAgentStatus` says what the agent is doing inside a turn, this says the whole
+   * exchange is over.
+   */
+  async changeDiscussionStatus(discussionID: string, status: "OPEN" | "RESOLVED"): Promise<void> {
+    const result = await withTimeout(
+      this.sdk.mutation.changeThreadDiscussionStatus({
+        input: { threadDiscussionId: discussionID, status },
+      }),
+      REQUEST_TIMEOUT_MS,
+    );
+
+    assertNoMutationError("changeThreadDiscussionStatus", result.error ?? null);
   }
 
   /**

@@ -24,6 +24,7 @@ class Agent {
     private readonly runner: Runner,
     private readonly me: MachineUser,
     private readonly secret: string,
+    private readonly resolveWhenDone: boolean,
   ) {}
 
   async handleWebhook(req: Request): Promise<Response> {
@@ -94,7 +95,9 @@ class Agent {
       } catch (sendErr) {
         console.log(`${dim(discussionID)} ${red("could not report the failure")} ${message(sendErr)}`);
       }
-      await this.setStatus(discussionID, "NEEDS_INPUT");
+      // IDLE, not NEEDS_INPUT: the report above is the input request. NEEDS_INPUT is for an agent
+      // blocked on a person, such as an approval, which is not what a failed turn is.
+      await this.setStatus(discussionID, "IDLE");
       return;
     }
 
@@ -108,11 +111,27 @@ class Agent {
 
     // IDLE last: settling on it is what marks the discussion unread so the answer surfaces.
     await this.setStatus(discussionID, "IDLE");
+
+    if (this.resolveWhenDone) await this.resolve(discussionID);
+  }
+
+  /**
+   * Closes the discussion once the agent has answered. Opt-in via PLAIN_RESOLVE_WHEN_DONE, because
+   * this example has no way of telling a finished conversation from a pause, and resolving a live
+   * one hides it from the customer. A real agent should decide this per turn.
+   */
+  private async resolve(discussionID: string): Promise<void> {
+    try {
+      await this.client.changeDiscussionStatus(discussionID, "RESOLVED");
+      console.log(`${dim(discussionID)} ${dim("resolved")}`);
+    } catch (err) {
+      console.log(`${dim(discussionID)} ${dim("could not resolve")} ${message(err)}`);
+    }
   }
 
   private async setStatus(
     discussionID: string,
-    status: "IN_PROGRESS" | "IDLE" | "NEEDS_INPUT",
+    status: "IN_PROGRESS" | "IDLE",
   ): Promise<void> {
     try {
       await this.client.updateAgentStatus(discussionID, status);
@@ -165,7 +184,7 @@ export async function runServe(
   }
 
   const runner = await Runner.create(provider);
-  const agent = new Agent(client, runner, me, config.secret);
+  const agent = new Agent(client, runner, me, config.secret, config.resolveWhenDone);
 
   Bun.serve({
     port: PORT,

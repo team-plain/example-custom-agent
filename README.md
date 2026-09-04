@@ -75,6 +75,14 @@ Then open a thread in Plain, click Ask Sidekick, pick your agent and ask it some
 The system prompt is `prompt.md`, prepended to the first message of each discussion. Edit it to
 change what the agent is and what it will do.
 
+Each turn runs `IN_PROGRESS` → post the answer → `IDLE`, and a failed turn posts the error and still
+settles on `IDLE`. Settling last is what marks the discussion unread, so the answer surfaces.
+
+Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent has answered, via
+`changeThreadDiscussionStatus`. It is off by default, because this example cannot tell a finished
+conversation from a pause and a resolved discussion drops out of the customer's view. See
+[PROTOCOL.md](PROTOCOL.md) for when to reach for it.
+
 ## Using a different agent CLI
 
 Claude Code is the default. `--provider` swaps it for another CLI you have installed and logged in

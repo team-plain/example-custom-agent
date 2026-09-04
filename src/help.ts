@@ -14,6 +14,7 @@ const VARIABLES: [string, string][] = [
   ["PLAIN_API_KEY", "required"],
   ["PLAIN_WEBHOOK_SECRET", "required"],
   ["PUBLIC_URL", "optional, only printed on startup so you can paste it into Plain"],
+  ["PLAIN_RESOLVE_WHEN_DONE", "optional, set to 1 to resolve the discussion after answering"],
 ];
 
 /** Runs before the config is validated, so it still works when .env is the thing that is wrong. */

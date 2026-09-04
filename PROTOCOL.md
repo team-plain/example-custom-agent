@@ -29,7 +29,7 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.4.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.**.
+**Use `@team-plain/graphql` 1.5.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0.
 
 Do not confuse with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
 the previous generation of the SDK. That package is deprecated.
@@ -193,6 +193,33 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 ```
 
 The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on `IDLE` last: that is what marks the discussion unread, so the answer surfaces.
+
+Settle on `IDLE` when the turn fails too. Post the failure as a message first, so the customer sees
+what went wrong, then go `IDLE`: the message you just posted is the request for input, so there is
+nothing for `NEEDS_INPUT` to add.
+
+`NEEDS_INPUT` means the agent has stopped and is waiting on a person, an approval being the usual
+case. That is a real state and the API still documents it. [ORCA-865](https://linear.app/plain/issue/ORCA-865)
+will remove it, so prefer not to build on it, but a failed turn was never what it was for.
+
+### Resolving the conversation
+
+`agentStatus` says what the agent is doing inside a turn. It does not say the conversation is over.
+That is the discussion's own status, and it moves with a different mutation:
+
+```ts
+const result = await client.mutation.changeThreadDiscussionStatus({
+  input: { threadDiscussionId: "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV", status: "RESOLVED" },
+});
+// status is OPEN | RESOLVED. Resolving is reversible: pass OPEN to reopen.
+```
+
+Use this instead of `markThreadDiscussionAsResolved`, which is deprecated and only ever resolved.
+
+Resolve only when the customer genuinely needs nothing further. A resolved discussion drops out of
+their view, so resolving a live conversation loses it. This example keeps the call behind
+`PLAIN_RESOLVE_WHEN_DONE=1` and leaves it off, because it cannot tell a finished conversation from a
+pause. A real agent should make that judgement per turn.
 
 ## 6. Two calls worth having
 
