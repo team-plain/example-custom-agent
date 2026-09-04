@@ -214,7 +214,8 @@ const result = await client.mutation.changeThreadDiscussionStatus({
 // status is OPEN | RESOLVED. Resolving is reversible: pass OPEN to reopen.
 ```
 
-Use this instead of `markThreadDiscussionAsResolved`, which is deprecated and only ever resolved.
+This is the only way to resolve a discussion. An older `markThreadDiscussionAsResolved` mutation is
+being removed; if you find it in an old example, it only ever resolved and never reopened.
 
 Resolve only when the customer genuinely needs nothing further. A resolved discussion drops out of
 their view, so resolving a live conversation loses it. This example keeps the call behind
