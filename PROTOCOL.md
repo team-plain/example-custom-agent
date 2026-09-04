@@ -195,8 +195,12 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
 The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on `IDLE` last: that is what marks the discussion unread, so the answer surfaces.
 
 Settle on `IDLE` when the turn fails too. Post the failure as a message first, so the customer sees
-what went wrong, then go `IDLE`. Do not use `NEEDS_INPUT`: it is deprecated and on its way out of the
-API, and the message you just posted is the request for input.
+what went wrong, then go `IDLE`: the message you just posted is the request for input, so there is
+nothing for `NEEDS_INPUT` to add.
+
+`NEEDS_INPUT` means the agent has stopped and is waiting on a person, an approval being the usual
+case. That is a real state and the API still documents it. [ORCA-865](https://linear.app/plain/issue/ORCA-865)
+will remove it, so prefer not to build on it, but a failed turn was never what it was for.
 
 ### Resolving the conversation
 

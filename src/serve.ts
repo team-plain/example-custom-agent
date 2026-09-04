@@ -95,8 +95,8 @@ class Agent {
       } catch (sendErr) {
         console.log(`${dim(discussionID)} ${red("could not report the failure")} ${message(sendErr)}`);
       }
-      // IDLE, not NEEDS_INPUT: the report above is the input request, and NEEDS_INPUT is on its
-      // way out of the API. Settling IDLE is what surfaces the message as unread either way.
+      // IDLE, not NEEDS_INPUT: the report above is the input request. NEEDS_INPUT is for an agent
+      // blocked on a person, such as an approval, which is not what a failed turn is.
       await this.setStatus(discussionID, "IDLE");
       return;
     }

@@ -121,8 +121,7 @@ export class PlainClient {
   /**
    * Moves the discussion itself between OPEN and RESOLVED. This is the conversation's state, not the
    * agent's: `updateAgentStatus` says what the agent is doing inside a turn, this says the whole
-   * exchange is over. Resolving is a claim that the customer needs nothing further, so the agent
-   * only does it when explicitly asked to.
+   * exchange is over.
    */
   async changeDiscussionStatus(discussionID: string, status: "OPEN" | "RESOLVED"): Promise<void> {
     const result = await withTimeout(
