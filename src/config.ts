@@ -10,6 +10,8 @@ export type Config = {
   apiKey: string;
   secret: string;
   publicURL: string;
+  /** Opt in to the agent resolving its own discussion once it has answered. Off unless asked for. */
+  resolveWhenDone: boolean;
 };
 
 /**
@@ -43,7 +45,12 @@ export function loadConfig(): Config {
     throw new Error("set PLAIN_WEBHOOK_SECRET in .env (Plain → Settings → Request Signing)");
   }
 
-  return { apiKey, secret, publicURL: (process.env.PUBLIC_URL ?? "").replace(/\/+$/, "") };
+  return {
+    apiKey,
+    secret,
+    publicURL: (process.env.PUBLIC_URL ?? "").replace(/\/+$/, ""),
+    resolveWhenDone: (process.env.PLAIN_RESOLVE_WHEN_DONE ?? "").trim() === "1",
+  };
 }
 
 export function truncate(s: string, n: number): string {
