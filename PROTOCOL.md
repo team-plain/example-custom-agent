@@ -12,7 +12,7 @@ packages. This project uses two of them:
 
 | Package | Version | What it is |
 | --- | --- | --- |
-| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.4.0 | Typed client with generated model classes |
+| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.6.0 | Typed client with generated model classes |
 | [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.7.1 | Webhook parsing and signature verification |
 | [`@team-plain/ui-components`](https://www.npmjs.com/package/@team-plain/ui-components) | 5.0.0 | UI component builders, not needed here |
 
@@ -29,7 +29,12 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.5.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0.
+**Use `@team-plain/graphql` 1.6.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0.
+
+On a tool call entry, read **`status`**, not `isSuccess`. `isSuccess` is deprecated and is removed once 1.6 has
+propagated. It is also lossy: a call still `PENDING` reads `false`, so the boolean cannot tell "not finished" from
+"failed". `status` is `PENDING`, `SUCCESS` or `ERROR`. On the same entry `service` and `op` are now nullable, and
+are null on a call an agent reported, because Plain has no name for it.
 
 Do not confuse with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
 the previous generation of the SDK. That package is deprecated.
