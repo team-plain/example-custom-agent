@@ -81,7 +81,25 @@ export async function reportOutcome(
  * previews the content rather than saying "send a message".
  */
 export function describeReply(draft: string): string {
-  return `Reply to the customer: ${truncate(oneLine(draft), 200)}`;
+  return `Reply to the customer: ${truncate(oneLine(stripMarkdown(draft)), 200)}`;
+}
+
+/**
+ * The card heading is plain text, so markdown syntax shows up literally there while the posted reply
+ * renders it. Seeing `**ready to send**` on the card reads as a bug even though it is the real draft.
+ */
+export function stripMarkdown(s: string): string {
+  return s
+    .replace(/```[\s\S]*?```/g, " code block ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+    .replace(/^\s{0,3}>\s?/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/(\*\*\*|___)(.+?)\1/g, "$2")
+    .replace(/(\*\*|__)(.+?)\1/g, "$2")
+    .replace(/(?<![*\w])\*(?!\s)([^*]+?)(?<!\s)\*(?![*\w])/g, "$1")
+    .replace(/(?<![_\w])_(?!\s)([^_]+?)(?<!\s)_(?![_\w])/g, "$1");
 }
 
 export function oneLine(s: string): string {

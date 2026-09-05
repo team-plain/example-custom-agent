@@ -351,6 +351,18 @@ underneath, and usually nothing else, so `text` should name the action and previ
 ready. `service`, `op` and `args` are **not** settable by an agent, so they are null on your calls and
 the card shows no argument block. That is expected.
 
+**You cannot gate a discussion you created yourself.** `createDiscussion` from an agent's own key
+produces a discussion with `agent: null`, which Plain treats as a Sidekick discussion, and every
+approval mutation on it is refused:
+
+```
+FORBIDDEN: Action not allowed: This discussion is not driven by a custom agent;
+Plain manages Sidekick discussions.
+```
+
+**A person starts the session and picks the agent**; that is what binds it. So an agent cannot
+manufacture its own approval flow, and a test of this feature needs a human-started session.
+
 **Do not touch `agentStatus` while a card is open.** Plain moves the discussion into its approval-pending
 state itself when you request the approval, and it refuses `IDLE` and `IN_PROGRESS` while the card stands.
 **Never set `TOOL_CALL_APPROVAL_PENDING` yourself.**

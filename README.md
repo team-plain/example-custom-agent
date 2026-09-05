@@ -83,6 +83,19 @@ Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent ha
 conversation from a pause and a resolved discussion drops out of the customer's view. See
 [PROTOCOL.md](PROTOCOL.md) for when to reach for it.
 
+## Webhook version, the one setting that silently wastes an afternoon
+
+**`@team-plain/webhooks` pins exactly one webhook target version.** Not a minimum: a target set
+**newer** than the package fails just as hard as one set older.
+
+| `@team-plain/webhooks` | required target version |
+| --- | --- |
+| 1.7.1 | `2026-08-19` |
+| 1.8.0 | `2026-08-31` (what this example uses) |
+
+A mismatch does not look like a version problem. Plain delivers, your server answers **401**, and the
+discussion sits on "thinking" forever. Only your own log says why. Change both together.
+
 ## Approving what the agent does
 
 **Before the agent posts its answer, it asks a human.** The draft appears in the app as a card with
