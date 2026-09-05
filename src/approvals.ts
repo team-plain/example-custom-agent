@@ -87,6 +87,13 @@ export function describeReply(draft: string): string {
 /**
  * The card heading is plain text, so markdown syntax shows up literally there while the posted reply
  * renders it. Seeing `**ready to send**` on the card reads as a bug even though it is the real draft.
+ *
+ * Blockquote markers are deliberately NOT stripped, unlike every other marker here. The rule is: drop
+ * a marker whose loss costs only styling, keep one whose loss costs structure. Losing `**` costs bold.
+ * Losing `>` costs the reader the fact that this was a set-off quote, and oneLine() has already
+ * collapsed the newline that carried it, so "We found:\n> 100 duplicates" reads as the flat sentence
+ * "We found: 100 duplicates" and the bound turns into a count. The render keeps that structure; a
+ * one-line card cannot, which is exactly why the card must not also eat the marker.
  */
 export function stripMarkdown(s: string): string {
   return s
@@ -94,7 +101,6 @@ export function stripMarkdown(s: string): string {
     .replace(/`([^`]*)`/g, "$1")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}>\s?/gm, "")
     .replace(/^\s*[-*+]\s+/gm, "")
     .replace(/(\*\*\*|___)(.+?)\1/g, "$2")
     .replace(/(\*\*|__)(.+?)\1/g, "$2")
