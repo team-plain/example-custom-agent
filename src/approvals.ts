@@ -43,6 +43,24 @@ export async function askForApproval(
   return "TIMED_OUT";
 }
 
+/**
+ * Closes an abandoned card. Without this the card stays PENDING and still actionable, so a reviewer
+ * arriving after the timeout can approve a draft that will never be sent and be told nothing.
+ */
+export async function reportAbandoned(
+  client: PlainClient,
+  discussionID: string,
+  action: GatedAction,
+): Promise<void> {
+  await client.upsertToolCall(
+    discussionID,
+    action.toolCallID,
+    "ERROR",
+    action.text,
+    `no decision within ${Math.round(WAIT_TIMEOUT_MS / 60_000)} minutes, so this draft was discarded`,
+  );
+}
+
 /** Reports how the approved call actually went, so the timeline entry stops saying PENDING. */
 export async function reportOutcome(
   client: PlainClient,

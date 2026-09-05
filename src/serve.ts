@@ -1,4 +1,4 @@
-import { askForApproval, describeReply, oneLine, reportOutcome } from "./approvals.ts";
+import { askForApproval, describeReply, oneLine, reportAbandoned, reportOutcome } from "./approvals.ts";
 import { PORT, WEBHOOK_PATH, type Config } from "./config.ts";
 import type { ProviderName } from "./providers.ts";
 import { bold, cyan, dim, fail, green, label, red, warn } from "./ui.ts";
@@ -91,7 +91,12 @@ class Agent {
       answer = await this.runner.ask(discussionID, prompt);
     } catch (err) {
       console.log(`${dim(discussionID)} ${red("claude failed")} ${message(err)}`);
-      const report = `I could not answer that. My runner failed with:\n\n\`\`\`\n${message(err)}\n\`\`\``;
+      // The third write, and the only ungated one. It stays ungated on purpose: a gated failure
+      // notice can fail too, and then the discussion says nothing at all. What it must not do is
+      // carry the runner's raw output past the gate, since that text is whatever the CLI printed.
+      const report = this.gated.reply
+        ? "I could not answer that. My runner failed, and the error is in the agent's log."
+        : `I could not answer that. My runner failed with:\n\n\`\`\`\n${message(err)}\n\`\`\``;
       try {
         await this.client.sendDiscussionMessage(discussionID, report);
       } catch (sendErr) {
@@ -155,7 +160,8 @@ class Agent {
       }
 
       if (outcome === "TIMED_OUT") {
-        console.log(`${dim(discussionID)} ${dim("no decision in time, leaving the card open")}`);
+        console.log(`${dim(discussionID)} ${dim("no decision in time, discarding the draft")}`);
+        await reportAbandoned(this.client, discussionID, action).catch(() => {});
         return false;
       }
 
@@ -206,6 +212,7 @@ class Agent {
       ).catch(() => "TIMED_OUT" as const);
       if (outcome === "TIMED_OUT" || outcome.decision === "DENIED") {
         console.log(`${dim(discussionID)} ${dim("resolve not approved, leaving it open")}`);
+        if (outcome === "TIMED_OUT") await reportAbandoned(this.client, discussionID, action).catch(() => {});
         return;
       }
       await reportOutcome(this.client, discussionID, action, undefined).catch(() => {});

@@ -275,9 +275,12 @@ wait for a person, and shows them a card in the app with an Approve and a Deny b
 
 **This example gates its own writes, not its tool calls, and that is a property of the example rather than
 of the API.** It delegates thinking to an external CLI and gets text back, so no tool call ever passes
-through its own code and there is nothing to intercept. Its only writes are the reply it posts and the
-resolve it may perform, so those are what it gates. **A real agent with a tool loop gates tool calls in
-exactly the same three steps**, naming each call instead of each write.
+through its own code and there is nothing to intercept. It writes three things: the reply it posts, the
+resolve it may perform, and a notice when its runner dies. **It gates the first two.** The failure notice
+stays ungated, because a gated failure notice can itself fail and then the discussion says nothing at all;
+what it does instead is drop the runner's raw output while the gate is on, since that text is whatever the
+CLI printed and no human has read it. **A real agent with a tool loop gates tool calls in exactly the same
+three steps**, naming each call instead of each write.
 
 The flow, in order:
 
@@ -312,6 +315,11 @@ type ThreadDiscussionToolCallApprovalEntryPayload {
 
 **On `APPROVED`**, run the call, then report the real outcome with `upsertDiscussionToolCall` and
 `SUCCESS` or `ERROR`. Leaving it `PENDING` leaves the timeline saying the call never finished.
+
+**If you give up waiting, close the card.** This example waits 15 minutes and then reports the call as
+`ERROR` with "no decision within 15 minutes, this draft was discarded". Leaving it open instead is worse
+than it sounds: the card stays actionable, so a reviewer arriving late reads the draft, clicks Approve,
+watches the card turn `APPROVED`, and is never told that nothing was sent.
 
 **On `DENIED`, do not run it.** Feed `reviewerNote` back to the model as the result and let it try again.
 A second attempt needs a **new `toolCallId`**: one approval gates one call, and a decided card is never
