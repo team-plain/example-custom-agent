@@ -12,7 +12,7 @@ packages. This project uses two of them:
 
 | Package | Version | What it is |
 | --- | --- | --- |
-| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.6.0 | Typed client with generated model classes |
+| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.7.0 | Typed client with generated model classes |
 | [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.7.1 | Webhook parsing and signature verification |
 | [`@team-plain/ui-components`](https://www.npmjs.com/package/@team-plain/ui-components) | 5.0.0 | UI component builders, not needed here |
 
@@ -29,7 +29,7 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.6.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0.
+**Use `@team-plain/graphql` 1.7.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0; the tool call approval mutations landed in 1.7.0.
 
 On a tool call entry, read **`status`**, not `isSuccess`. `isSuccess` is deprecated and is removed once 1.6 has
 propagated. It is also lossy: a call still `PENDING` reads `false`, so the boolean cannot tell "not finished" from
@@ -267,6 +267,72 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
     "variables": { "discussionId": "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV" }
   }'
 ```
+
+## 7. Gating an action on a human
+
+Some actions should not happen because a model decided they should. Plain lets you stop in front of one and
+wait for a person, and shows them a card in the app with an Approve and a Deny button.
+
+**This example gates its own writes, not its tool calls, and that is a property of the example rather than
+of the API.** It delegates thinking to an external CLI and gets text back, so no tool call ever passes
+through its own code and there is nothing to intercept. Its only writes are the reply it posts and the
+resolve it may perform, so those are what it gates. **A real agent with a tool loop gates tool calls in
+exactly the same three steps**, naming each call instead of each write.
+
+The flow, in order:
+
+```ts
+// 1. Report the call you are about to make. toolCallId is yours, and unique within the discussion.
+await client.mutation.upsertDiscussionToolCall({
+  input: { discussionId, toolCallId: "reply-1", status: "PENDING", text: "Reply to the customer: We refunded…" },
+});
+
+// 2. Ask. Idempotent by toolCallId: asking twice returns the same approval, so a retry is safe.
+await client.mutation.requestDiscussionToolCallApproval({
+  input: { discussionId, toolCallId: "reply-1", justification: "I drafted an answer and believe it is ready." },
+});
+
+// 3. Poll the discussion's messages for the approval entry. There is no webhook for this yet.
+const page = await (await client.query.discussion({ discussionId })).messages({ last: 50 });
+```
+
+The entry you are looking for:
+
+```graphql
+type ThreadDiscussionToolCallApprovalEntryPayload {
+  approvalId: ID!
+  toolCallId: ID!               # the call this gates, unique among the discussion's approvals
+  justification: String!
+  status: AgentApprovalStatus!  # PENDING | APPROVED | DENIED
+  reviewerNote: String          # what the reviewer typed; on DENIED it becomes the call's error
+  resolvedAt: DateTime
+  resolvedBy: InternalActor
+}
+```
+
+**On `APPROVED`**, run the call, then report the real outcome with `upsertDiscussionToolCall` and
+`SUCCESS` or `ERROR`. Leaving it `PENDING` leaves the timeline saying the call never finished.
+
+**On `DENIED`, do not run it.** Feed `reviewerNote` back to the model as the result and let it try again.
+A second attempt needs a **new `toolCallId`**: one approval gates one call, and a decided card is never
+reopened. Do not report `ERROR` on the denied call either; Plain has already set its error to the note.
+
+**Make the card decidable on its own.** The reviewer sees `text` as the heading and `justification`
+underneath, and usually nothing else, so `text` should name the action and preview the content
+("Reply to the customer: <first 200 characters>"), and `justification` should say why you think it is
+ready. `service`, `op` and `args` are **not** settable by an agent, so they are null on your calls and
+the card shows no argument block. That is expected.
+
+**Do not touch `agentStatus` while a card is open.** Plain moves the discussion into its approval-pending
+state itself when you request the approval, and it refuses `IDLE` and `IN_PROGRESS` while the card stands.
+**Never set `TOOL_CALL_APPROVAL_PENDING` yourself.**
+
+Which brings up the one thing to get right on reads:
+
+**`agentStatus` reports `NEEDS_INPUT` for a discussion waiting on an approval today, and will report
+`TOOL_CALL_APPROVAL_PENDING` once the rename ships.** Both names mean the same state. Accept both. If you
+`switch` on the enum, handle both arms, and give the switch a `default` unless you want the next enum
+addition to stop your build.
 
 ## Gotchas
 

@@ -1,4 +1,8 @@
-export const API_URL = "https://core-api.uk.plain.com/graphql/v1";
+/**
+ * Prod unless PLAIN_API_URL says otherwise. The override exists so the approval flow can be driven
+ * against dev-uk without editing the source; leave it unset and this example talks to production.
+ */
+export const API_URL = (process.env.PLAIN_API_URL ?? "").trim() || "https://core-api.uk.plain.com/graphql/v1";
 
 export const DISCUSSION_MESSAGE_CREATED_EVENT = "discussion.message_created";
 
@@ -12,6 +16,12 @@ export type Config = {
   publicURL: string;
   /** Opt in to the agent resolving its own discussion once it has answered. Off unless asked for. */
   resolveWhenDone: boolean;
+  /**
+   * Which of the agent's own writes need a human to approve them first. The reply is gated by
+   * default because it is what the customer sees; the resolve is gated only when the agent resolves
+   * at all. The failure report is never gated: gating it strands a broken discussion in silence.
+   */
+  gated: { reply: boolean; resolve: boolean };
 };
 
 /**
@@ -45,11 +55,18 @@ export function loadConfig(): Config {
     throw new Error("set PLAIN_WEBHOOK_SECRET in .env (Plain → Settings → Request Signing)");
   }
 
+  const resolveWhenDone = (process.env.PLAIN_RESOLVE_WHEN_DONE ?? "").trim() === "1";
+
   return {
     apiKey,
     secret,
     publicURL: (process.env.PUBLIC_URL ?? "").replace(/\/+$/, ""),
-    resolveWhenDone: (process.env.PLAIN_RESOLVE_WHEN_DONE ?? "").trim() === "1",
+    resolveWhenDone,
+    gated: {
+      // Opt OUT, not in: an example that ships the gate switched off teaches nothing.
+      reply: (process.env.PLAIN_GATE_REPLY ?? "1").trim() !== "0",
+      resolve: resolveWhenDone && (process.env.PLAIN_GATE_RESOLVE ?? "1").trim() !== "0",
+    },
   };
 }
 

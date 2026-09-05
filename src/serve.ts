@@ -1,3 +1,4 @@
+import { askForApproval, describeReply, oneLine, reportOutcome } from "./approvals.ts";
 import { PORT, WEBHOOK_PATH, type Config } from "./config.ts";
 import type { ProviderName } from "./providers.ts";
 import { bold, cyan, dim, fail, green, label, red, warn } from "./ui.ts";
@@ -25,6 +26,7 @@ class Agent {
     private readonly me: MachineUser,
     private readonly secret: string,
     private readonly resolveWhenDone: boolean,
+    private readonly gated: { reply: boolean; resolve: boolean },
   ) {}
 
   async handleWebhook(req: Request): Promise<Response> {
@@ -101,18 +103,90 @@ class Agent {
       return;
     }
 
-    try {
-      const messageID = await this.client.sendDiscussionMessage(discussionID, answer);
-      console.log(`${dim(discussionID)} ${green("answered")} ${messageID} (${answer.length} chars)`);
-    } catch (err) {
-      console.log(`${dim(discussionID)} ${red("could not post the answer")} ${message(err)}`);
-      return;
-    }
+    const posted = this.gated.reply
+      ? await this.postGated(discussionID, prompt, answer)
+      : await this.post(discussionID, answer);
+    if (!posted) return;
 
     // IDLE last: settling on it is what marks the discussion unread so the answer surfaces.
     await this.setStatus(discussionID, "IDLE");
 
     if (this.resolveWhenDone) await this.resolve(discussionID);
+  }
+
+  private async post(discussionID: string, answer: string): Promise<boolean> {
+    try {
+      const messageID = await this.client.sendDiscussionMessage(discussionID, answer);
+      console.log(`${dim(discussionID)} ${green("answered")} ${messageID} (${answer.length} chars)`);
+      return true;
+    } catch (err) {
+      console.log(`${dim(discussionID)} ${red("could not post the answer")} ${message(err)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Puts the draft in front of a human before the customer sees it. A denial is not a failure: the
+   * reviewer's note goes back to the model, which redrafts once and asks again under a NEW
+   * toolCallId, because one approval gates one call and a decided card is never reopened.
+   */
+  private async postGated(discussionID: string, prompt: string, first: string): Promise<boolean> {
+    let draft = first;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const action = {
+        toolCallID: `reply-${discussionID}-${Date.now()}-${attempt}`,
+        text: describeReply(draft),
+        justification:
+          attempt === 1
+            ? "I have drafted an answer to the customer's question and believe it is ready to send."
+            : "I have redrafted the answer to address your note. Please take another look.",
+      };
+
+      let outcome: Awaited<ReturnType<typeof askForApproval>>;
+      try {
+        outcome = await askForApproval(this.client, discussionID, action, (line) =>
+          console.log(`${dim(discussionID)} ${dim(line)}`),
+        );
+      } catch (err) {
+        // The gate itself failed, so nobody was asked. Posting anyway would defeat the point.
+        console.log(`${dim(discussionID)} ${red("could not ask for approval")} ${message(err)}`);
+        return false;
+      }
+
+      if (outcome === "TIMED_OUT") {
+        console.log(`${dim(discussionID)} ${dim("no decision in time, leaving the card open")}`);
+        return false;
+      }
+
+      if (outcome.decision === "APPROVED") {
+        const sent = await this.post(discussionID, draft);
+        await reportOutcome(
+          this.client,
+          discussionID,
+          action,
+          sent ? undefined : new Error("the reply was approved but Plain refused it"),
+        ).catch(() => {});
+        return sent;
+      }
+
+      const note = outcome.reviewerNote ?? "(no note given)";
+      console.log(`${dim(discussionID)} ${dim("denied")} ${oneLine(note)}`);
+      // The denied call's error is the reviewer's note, which Plain sets itself. Reporting ERROR
+      // here as well would overwrite it with our own wording.
+      if (attempt === 2) return false;
+
+      try {
+        draft = await this.runner.ask(
+          discussionID,
+          `${prompt}\n\nA human reviewed your draft and declined to send it. Their note:\n\n${note}\n\nRewrite the answer to address it. Reply with the new answer only.`,
+        );
+      } catch (err) {
+        console.log(`${dim(discussionID)} ${red("could not redraft")} ${message(err)}`);
+        return false;
+      }
+    }
+    return false;
   }
 
   /**
@@ -121,6 +195,22 @@ class Agent {
    * one hides it from the customer. A real agent should decide this per turn.
    */
   private async resolve(discussionID: string): Promise<void> {
+    if (this.gated.resolve) {
+      const action = {
+        toolCallID: `resolve-${discussionID}-${Date.now()}`,
+        text: "Resolve this discussion, closing it for the customer",
+        justification: "I believe the question is answered and the conversation can be closed.",
+      };
+      const outcome = await askForApproval(this.client, discussionID, action, (line) =>
+        console.log(`${dim(discussionID)} ${dim(line)}`),
+      ).catch(() => "TIMED_OUT" as const);
+      if (outcome === "TIMED_OUT" || outcome.decision === "DENIED") {
+        console.log(`${dim(discussionID)} ${dim("resolve not approved, leaving it open")}`);
+        return;
+      }
+      await reportOutcome(this.client, discussionID, action, undefined).catch(() => {});
+    }
+
     try {
       await this.client.changeDiscussionStatus(discussionID, "RESOLVED");
       console.log(`${dim(discussionID)} ${dim("resolved")}`);
@@ -184,7 +274,7 @@ export async function runServe(
   }
 
   const runner = await Runner.create(provider);
-  const agent = new Agent(client, runner, me, config.secret, config.resolveWhenDone);
+  const agent = new Agent(client, runner, me, config.secret, config.resolveWhenDone, config.gated);
 
   Bun.serve({
     port: PORT,
