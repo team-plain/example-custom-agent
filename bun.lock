@@ -5,7 +5,7 @@
       "name": "plain-example-custom-agent",
       "dependencies": {
         "@team-plain/graphql": "^1.7.0",
-        "@team-plain/webhooks": "^1.7.1",
+        "@team-plain/webhooks": "^1.8.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -18,7 +18,7 @@
 
     "@team-plain/graphql": ["@team-plain/graphql@1.7.0", "", { "dependencies": { "@graphql-typed-document-node/core": "^3.2.0", "graphql": "^16.9.0" } }, "sha512-r158EJZYcEdrzJnS7MOT0lDAw8MjTQb8dOMAfuEUzmKhpFxWec0BfGsq0+RTh5q+3hnlA+KDF+uet/CxFGrIFA=="],
 
-    "@team-plain/webhooks": ["@team-plain/webhooks@1.7.1", "", { "dependencies": { "ajv": "^8.12.0", "ajv-formats": "^2.1.1" } }, "sha512-jVKVFoMLszdp9FMWorRFLCQs1T9bQ2AtG+SExUJFg0HqxiW/y1HN0UxKd+v7KafXVFsXAlxPY7v3sbizvDwAMA=="],
+    "@team-plain/webhooks": ["@team-plain/webhooks@1.8.0", "", { "dependencies": { "ajv": "^8.12.0", "ajv-formats": "^2.1.1" } }, "sha512-09n6ObECU/8n19SOvP1DjQ7CUizPis2efOGe5P00qF1uhtgcKHTOpEYGWlz0IWMrfoUQU4N84czp/tGFUsJfgw=="],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 
