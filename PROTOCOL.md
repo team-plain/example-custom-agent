@@ -13,7 +13,7 @@ packages. This project uses two of them:
 | Package | Version | What it is |
 | --- | --- | --- |
 | [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.7.0 | Typed client with generated model classes |
-| [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.7.1 | Webhook parsing and signature verification |
+| [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.8.0 | Webhook parsing and signature verification |
 | [`@team-plain/ui-components`](https://www.npmjs.com/package/@team-plain/ui-components) | 5.0.0 | UI component builders, not needed here |
 
 ```bash
@@ -29,7 +29,7 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.7.0 or newer and `@team-plain/webhooks` 1.7.1 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0; the tool call approval mutations landed in 1.7.0.
+**Use `@team-plain/graphql` 1.7.0 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0; the tool call approval mutations landed in 1.7.0. **`@team-plain/webhooks` is different: see the version rule below, where "or newer" does not apply.**
 
 On a tool call entry, read **`status`**, not `isSuccess`. `isSuccess` is deprecated and is removed once 1.6 has
 propagated. It is also lossy: a call still `PENDING` reads `false`, so the boolean cannot tell "not finished" from
@@ -97,6 +97,26 @@ Signing](https://app.plain.com/~/settings/request-signing/)) and puts a hex SHA-
 
 `verifyPlainWebhook` does the whole job in one call: constant-time HMAC, schema validation, and a
 replay window. This is all [`src/webhook.ts`](src/webhook.ts) does.
+
+**Match your webhook target's version to the package exactly. This is the one setting that silently
+costs an afternoon.** `@team-plain/webhooks` pins a single target version as a constant, not a
+minimum, so a target set **newer** than the package fails exactly as hard as one set older:
+
+| `@team-plain/webhooks` | required webhook target version |
+| --- | --- |
+| 1.7.1 | `2026-08-19` |
+| 1.8.0 | `2026-08-31` |
+
+A mismatch does not look like a version problem from the outside. Plain delivers the request, your
+server answers **401**, the agent never runs, and the discussion sits on "thinking" forever. The
+reason is only visible in your own log:
+
+```
+The webhook payload (version=2026-08-19) is incompatible with the current version of the SDK.
+Original error: data/webhookMetadata/webhookTargetVersion must be equal to constant
+```
+
+So when you upgrade the package, change the target in the same breath.
 
 ```ts
 import { verifyPlainWebhook } from "@team-plain/webhooks";
