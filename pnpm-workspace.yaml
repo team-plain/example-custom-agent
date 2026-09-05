@@ -1,2 +1,0 @@
-minimumReleaseAgeExclude:
-  - '@team-plain/graphql@1.6.0'
