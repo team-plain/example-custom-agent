@@ -87,6 +87,10 @@ export function describeReply(draft: string): string {
 /**
  * The card heading is plain text, so markdown syntax shows up literally there while the posted reply
  * renders it. Seeing `**ready to send**` on the card reads as a bug even though it is the real draft.
+ *
+ * Blockquote markers are deliberately NOT stripped: a line-start `>` is ambiguous between a quote and
+ * a comparison, and eating it turns "> 100 duplicates" into "100 duplicates". A stray `>` reads fine
+ * anyway, unlike `**`, so the rule cost more than it bought.
  */
 export function stripMarkdown(s: string): string {
   return s
@@ -94,7 +98,6 @@ export function stripMarkdown(s: string): string {
     .replace(/`([^`]*)`/g, "$1")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s{0,3}>\s?/gm, "")
     .replace(/^\s*[-*+]\s+/gm, "")
     .replace(/(\*\*\*|___)(.+?)\1/g, "$2")
     .replace(/(\*\*|__)(.+?)\1/g, "$2")
