@@ -88,20 +88,20 @@ export function describeReply(draft: string): string {
  * The card heading is plain text, so markdown syntax shows up literally there while the posted reply
  * renders it. Seeing `**ready to send**` on the card reads as a bug even though it is the real draft.
  *
- * Blockquote markers are deliberately NOT stripped, unlike every other marker here. The rule is: drop
- * a marker whose loss costs only styling, keep one whose loss costs structure. Losing `**` costs bold.
- * Losing `>` costs the reader the fact that this was a set-off quote, and oneLine() has already
- * collapsed the newline that carried it, so "We found:\n> 100 duplicates" reads as the flat sentence
- * "We found: 100 duplicates" and the bound turns into a count. The render keeps that structure; a
- * one-line card cannot, which is exactly why the card must not also eat the marker.
+ * The rule: strip a marker whose loss costs only styling, keep one whose loss costs structure.
+ * oneLine() has already collapsed the newlines, so a kept marker is the only thing left telling the
+ * reader where a quote, a step or a section began. "> 100 duplicates" must not flatten to a count,
+ * and "- restart\n- clear the cache" must not flatten to "restart clear the cache".
+ *
+ * Two strips below are content rather than styling and are kept on purpose: a fenced block becomes
+ * " code block " because its body is useless in 200 characters, and a link keeps its text and drops
+ * its URL because the URL would eat the whole budget.
  */
 export function stripMarkdown(s: string): string {
   return s
     .replace(/```[\s\S]*?```/g, " code block ")
     .replace(/`([^`]*)`/g, "$1")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "")
     .replace(/(\*\*\*|___)(.+?)\1/g, "$2")
     .replace(/(\*\*|__)(.+?)\1/g, "$2")
     .replace(/(?<![*\w])\*(?!\s)([^*]+?)(?<!\s)\*(?![*\w])/g, "$1")
