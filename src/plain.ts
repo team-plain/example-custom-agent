@@ -17,6 +17,10 @@ export type WebhookTarget = {
   eventSubscriptions: { eventType: string }[];
 };
 
+export type ApprovalOutcome =
+  | { decision: "APPROVED" }
+  | { decision: "DENIED"; reviewerNote: string | null };
+
 export type Discussion = {
   id: string;
   thread: { title: string; customer: { fullName: string } | null } | null;
@@ -132,6 +136,77 @@ export class PlainClient {
     );
 
     assertNoMutationError("changeThreadDiscussionStatus", result.error ?? null);
+  }
+
+  /**
+   * Reports a call the agent is about to make, so the approval has something to name. `text` is what
+   * the reviewer reads on the card, and `toolCallId` is the agent's own id: it must be unique within
+   * the discussion, because an approval names a call by it.
+   */
+  async upsertToolCall(
+    discussionID: string,
+    toolCallID: string,
+    status: "PENDING" | "SUCCESS" | "ERROR",
+    text: string,
+    error?: string,
+  ): Promise<void> {
+    const result = await withTimeout(
+      this.sdk.mutation.upsertDiscussionToolCall({
+        input: { discussionId: discussionID, toolCallId: toolCallID, status, text, error },
+      }),
+      REQUEST_TIMEOUT_MS,
+    );
+
+    assertNoMutationError("upsertDiscussionToolCall", result.error ?? null);
+  }
+
+  /**
+   * Asks a human to approve the call. Idempotent by `toolCallId`: asking again returns the existing
+   * approval rather than opening a second card, so a retried turn is safe. The call must still be
+   * PENDING; Plain refuses to gate one that has already finished.
+   */
+  async requestApproval(
+    discussionID: string,
+    toolCallID: string,
+    justification: string,
+  ): Promise<void> {
+    const result = await withTimeout(
+      this.sdk.mutation.requestDiscussionToolCallApproval({
+        input: { discussionId: discussionID, toolCallId: toolCallID, justification },
+      }),
+      REQUEST_TIMEOUT_MS,
+    );
+
+    assertNoMutationError("requestDiscussionToolCallApproval", result.error ?? null);
+  }
+
+  /**
+   * Reads the approval entry for one call. Null while the human has not decided yet.
+   *
+   * Polling, because there is no webhook for an approval being resolved yet. `last` rather than
+   * `first`: the approval is at the end of the timeline, and a long discussion would push it off a
+   * page taken from the start.
+   */
+  async approvalOutcome(discussionID: string, toolCallID: string): Promise<ApprovalOutcome | null> {
+    return withTimeout(
+      (async () => {
+        const discussion = await this.sdk.query.discussion({ discussionId: discussionID });
+        const page = await discussion.messages({ last: 50 });
+
+        for (const message of page.nodes) {
+          const entry = message.entry;
+          if (entry?.__typename !== "ThreadDiscussionToolCallApprovalEntryPayload") continue;
+          if (entry.toolCallId !== toolCallID) continue;
+          if (entry.status === "APPROVED") return { decision: "APPROVED" as const };
+          if (entry.status === "DENIED") {
+            return { decision: "DENIED" as const, reviewerNote: entry.reviewerNote ?? null };
+          }
+          return null; // PENDING
+        }
+        return null;
+      })(),
+      REQUEST_TIMEOUT_MS,
+    );
   }
 
   /**

@@ -83,6 +83,22 @@ Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent ha
 conversation from a pause and a resolved discussion drops out of the customer's view. See
 [PROTOCOL.md](PROTOCOL.md) for when to reach for it.
 
+## Approving what the agent does
+
+**Before the agent posts its answer, it asks a human.** The draft appears in the app as a card with
+Approve and Deny, and the agent waits. Deny with a note and it redrafts once, then asks again.
+
+`PLAIN_GATE_REPLY=0` turns that off. `PLAIN_GATE_RESOLVE=0` turns off the same gate on resolving, which
+only applies when `PLAIN_RESOLVE_WHEN_DONE=1`. **Both are on by default**: an example that ships the gate
+switched off teaches nothing. The failure report the agent posts when its runner dies is never gated,
+because a gated failure notice can leave a broken discussion silent.
+
+The agent gates its own writes rather than tool calls, because it delegates thinking to a CLI and never
+sees a tool call. A real agent gates tool calls the same way. [PROTOCOL.md](PROTOCOL.md) has the flow.
+
+`PLAIN_API_URL` overrides the API endpoint, which defaults to production. Set it to run this against
+another stage.
+
 ## Using a different agent CLI
 
 Claude Code is the default. `--provider` swaps it for another CLI you have installed and logged in
