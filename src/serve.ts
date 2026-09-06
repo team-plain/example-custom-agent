@@ -102,8 +102,8 @@ class Agent {
       } catch (sendErr) {
         console.log(`${dim(discussionID)} ${red("could not report the failure")} ${message(sendErr)}`);
       }
-      // IDLE, not NEEDS_INPUT: the report above is the input request. NEEDS_INPUT is for an agent
-      // blocked on a person, such as an approval, which is not what a failed turn is.
+      // IDLE: the failure report above is itself the request for input. The waiting state,
+      // TOOL_CALL_APPROVAL_PENDING, is Plain's to set on an approval, never ours on a failed turn.
       await this.setStatus(discussionID, "IDLE");
       return;
     }
