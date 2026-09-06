@@ -12,7 +12,7 @@ packages. This project uses two of them:
 
 | Package | Version | What it is |
 | --- | --- | --- |
-| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 1.7.0 | Typed client with generated model classes |
+| [`@team-plain/graphql`](https://www.npmjs.com/package/@team-plain/graphql) | 3.0.0 | Typed client with generated model classes |
 | [`@team-plain/webhooks`](https://www.npmjs.com/package/@team-plain/webhooks) | 1.8.0 | Webhook parsing and signature verification |
 | [`@team-plain/ui-components`](https://www.npmjs.com/package/@team-plain/ui-components) | 5.0.0 | UI component builders, not needed here |
 
@@ -29,11 +29,11 @@ await client.query.myMachineUser();                              // queries unde
 await client.mutation.sendDiscussionMessage({ input: { … } });    // mutations under .mutation
 ```
 
-**Use `@team-plain/graphql` 1.7.0 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0; the tool call approval mutations landed in 1.7.0. **`@team-plain/webhooks` is different: see the version rule below, where "or newer" does not apply.**
+**Use `@team-plain/graphql` 3.0.0 or newer.** `changeThreadDiscussionStatus` landed in 1.5.0 and the tool call approval mutations in 1.7.0, but 3.0.0 is the first release whose documents no longer select fields the API has removed. **`@team-plain/webhooks` is different: see the version rule below, where "or newer" does not apply.**
 
-On a tool call entry, read **`status`**, not `isSuccess`. `isSuccess` is deprecated and is removed once 1.6 has
-propagated. It is also lossy: a call still `PENDING` reads `false`, so the boolean cannot tell "not finished" from
-"failed". `status` is `PENDING`, `SUCCESS` or `ERROR`. On the same entry `service` and `op` are now nullable, and
+On a tool call entry, read **`status`**. `isSuccess` is gone from 3.0.0, and it was lossy anyway: a call still
+`PENDING` read `false`, so the boolean could not tell "not finished" from "failed". `status` is `PENDING`,
+`SUCCESS` or `ERROR`. On the same entry `service` and `op` are now nullable, and
 are null on a call an agent reported, because Plain has no name for it.
 
 Do not confuse with [`@team-plain/typescript-sdk`](https://www.npmjs.com/package/@team-plain/typescript-sdk),
