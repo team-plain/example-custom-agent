@@ -14,7 +14,7 @@
   },
   "type": "module",
   "dependencies": {
-    "@team-plain/graphql": "^1.7.0",
+    "@team-plain/graphql": "^3.0.0",
     "@team-plain/webhooks": "^1.8.0"
   }
 }
