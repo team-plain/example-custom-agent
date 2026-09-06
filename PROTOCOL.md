@@ -221,11 +221,11 @@ The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on
 
 Settle on `IDLE` when the turn fails too. Post the failure as a message first, so the customer sees
 what went wrong, then go `IDLE`: the message you just posted is the request for input, so there is
-nothing for `NEEDS_INPUT` to add.
+nothing a waiting state would add.
 
-`NEEDS_INPUT` means the agent has stopped and is waiting on a person, an approval being the usual
-case. That is a real state and the API still documents it. [ORCA-865](https://linear.app/plain/issue/ORCA-865)
-will remove it, so prefer not to build on it, but a failed turn was never what it was for.
+`TOOL_CALL_APPROVAL_PENDING` means the agent has stopped and is waiting on a person to decide a tool
+call approval. Plain sets it itself when you call `requestDiscussionToolCallApproval`, and you never
+set it. A failed turn is not that state, so do not reach for it there.
 
 ### Resolving the conversation
 
@@ -369,10 +369,10 @@ state itself when you request the approval, and it refuses `IDLE` and `IN_PROGRE
 
 Which brings up the one thing to get right on reads:
 
-**`agentStatus` reports `NEEDS_INPUT` for a discussion waiting on an approval today, and will report
-`TOOL_CALL_APPROVAL_PENDING` once the rename ships.** Both names mean the same state. Accept both. If you
-`switch` on the enum, handle both arms, and give the switch a `default` unless you want the next enum
-addition to stop your build.
+**`agentStatus` reports `TOOL_CALL_APPROVAL_PENDING` for a discussion waiting on an approval.** It
+replaced `NEEDS_INPUT`, which the API no longer returns and no longer accepts. If you still carry a
+`NEEDS_INPUT` arm in a `switch`, it is unreachable and can go. Give the switch a `default` unless you
+want the next enum addition to stop your build.
 
 ## Gotchas
 
