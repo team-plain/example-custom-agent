@@ -113,7 +113,8 @@ class Agent {
       : await this.post(discussionID, answer);
     if (!posted) return;
 
-    // IDLE last: settling on it is what marks the discussion unread so the answer surfaces.
+    // IDLE last so the status is not still claiming work while a finished answer sits there.
+    // The post above is what marked the discussion unread, not this call.
     await this.setStatus(discussionID, "IDLE");
 
     if (this.resolveWhenDone) await this.resolve(discussionID);
