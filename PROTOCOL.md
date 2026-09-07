@@ -58,7 +58,7 @@ including the ones your own agent writes. These are the fields that matter:
   "type": "discussion.message_created",
   "timestamp": "2026-08-20T12:00:00Z",
   "workspaceId": "w_01ARZ3NDEKTSV4RRFFQ69G5FAV",
-  "webhookMetadata": { "webhookTargetVersion": "2026-08-19" },
+  "webhookMetadata": { "webhookTargetVersion": "2026-09-06" },
   "payload": {
     "eventType": "discussion.message_created",
     "discussion": {
@@ -351,14 +351,26 @@ type DiscussionToolCallApprovalResolvedPayload = {
 
 ```json
 {
+  "id": "ev_01ARZ3NDEKTSV4RRFFQ69G5FAV",
   "type": "discussion.tool_call_approval_resolved",
+  "timestamp": "2026-09-06T09:12:41Z",
+  "workspaceId": "w_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "webhookMetadata": { "webhookTargetVersion": "2026-09-06" },
   "payload": {
     "eventType": "discussion.tool_call_approval_resolved",
-    "approvalId": "appr_123",
+    "discussion": {
+      "id": "thd_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "type": "AGENT_SESSION",
+      "status": "OPEN",
+      "threadId": "th_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "agent": { "id": "mu_01ARZ3NDEKTSV4RRFFQ69G5FAV" }
+    },
+    "approvalId": "appr_01ARZ3NDEKTSV4RRFFQ69G5FAV",
     "toolCallId": "reply-1",
     "status": "DENIED",
     "justification": "I drafted an answer and believe it is ready.",
     "reviewerNote": "Too blunt, and we have not confirmed the refund yet.",
+    "resolvedBy": { "userId": "u_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
     "resolvedAt": "2026-09-06T09:12:41.000Z"
   }
 }
