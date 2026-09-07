@@ -16,13 +16,9 @@ export type GatedAction = {
   justification: string;
 };
 
-/**
- * Reports the action as a PENDING call, asks for approval, and waits for a human.
- *
- * The agent status is deliberately left alone here. Plain moves the discussion to its
- * approval-pending state on `requestDiscussionToolCallApproval` and refuses IDLE or IN_PROGRESS
- * while a card is open, so setting either would fail the mutation and lie about the state.
- */
+// The agent status is deliberately left alone here. Plain moves the discussion to its
+// approval-pending state on `requestDiscussionToolCallApproval` and refuses IDLE or IN_PROGRESS
+// while a card is open, so setting either would fail the mutation and lie about the state.
 export async function askForApproval(
   client: PlainClient,
   discussionID: string,
@@ -85,19 +81,9 @@ export function describeReply(draft: string): string {
   return `Reply to the customer: ${truncate(oneLine(stripMarkdown(draft)), 200)}`;
 }
 
-/**
- * The card heading is plain text, so markdown syntax shows up literally there while the posted reply
- * renders it. Seeing `**ready to send**` on the card reads as a bug even though it is the real draft.
- *
- * The rule: strip a marker whose loss costs only styling, keep one whose loss costs structure.
- * oneLine() has already collapsed the newlines, so a kept marker is the only thing left telling the
- * reader where a quote, a step or a section began. "> 100 duplicates" must not flatten to a count,
- * and "- restart\n- clear the cache" must not flatten to "restart clear the cache".
- *
- * Two strips below are content rather than styling and are kept on purpose: a fenced block becomes
- * " code block " because its body is useless in 200 characters, and a link keeps its text and drops
- * its URL because the URL would eat the whole budget.
- */
+// The card heading is plain text, so markdown shows up literally there while the reply renders it.
+// The rule: strip a marker whose loss costs only styling, keep one whose loss costs structure,
+// because oneLine() has already collapsed the newlines that carried it.
 export function stripMarkdown(s: string): string {
   return s
     .replace(/```[\s\S]*?```/g, " code block ")
