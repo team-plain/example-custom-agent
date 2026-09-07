@@ -106,6 +106,7 @@ minimum, so a target set **newer** than the package fails exactly as hard as one
 | --- | --- |
 | 1.7.1 | `2026-08-19` |
 | 1.8.0 | `2026-08-31` |
+| 1.9.0 | `2026-09-06` (what this example uses) |
 
 A mismatch does not look like a version problem from the outside. Plain delivers the request, your
 server answers **401**, the agent never runs, and the discussion sits on "thinking" forever. The
@@ -315,11 +316,60 @@ await client.mutation.requestDiscussionToolCallApproval({
   input: { discussionId, toolCallId: "reply-1", justification: "I drafted an answer and believe it is ready." },
 });
 
-// 3. Poll the discussion's messages for the approval entry. There is no webhook for this yet.
+// 3. Wait for the decision. Two ways to learn about it, below: this example polls.
 const page = await (await client.query.discussion({ discussionId })).messages({ last: 50 });
 ```
 
-The entry you are looking for:
+### Learning that a card was decided
+
+**There is a webhook, and this example does not use it.** Both events are delivered on target
+version `2026-09-06`:
+
+```ts
+type DiscussionToolCallApprovalRequestedPayload = {
+  eventType: "discussion.tool_call_approval_requested";
+  discussion: Discussion;
+  approvalId: string;
+  toolCallId: string;            // the call this gates, yours, unique within the discussion
+  justification: string;
+  requestedBy: InternalActor;
+  requestedAt: string;
+};
+
+type DiscussionToolCallApprovalResolvedPayload = {
+  eventType: "discussion.tool_call_approval_resolved";
+  discussion: Discussion;
+  approvalId: string;
+  toolCallId: string;
+  status: "APPROVED" | "DENIED" | "UNKNOWN_APPROVAL_STATUS";  // give any switch a default
+  justification: string;
+  reviewerNote: string | null;   // what the reviewer typed; on DENIED it becomes the call's error
+  resolvedBy: InternalActor;
+  resolvedAt: string;
+};
+```
+
+```json
+{
+  "type": "discussion.tool_call_approval_resolved",
+  "payload": {
+    "eventType": "discussion.tool_call_approval_resolved",
+    "approvalId": "appr_123",
+    "toolCallId": "reply-1",
+    "status": "DENIED",
+    "justification": "I drafted an answer and believe it is ready.",
+    "reviewerNote": "Too blunt, and we have not confirmed the refund yet.",
+    "resolvedAt": "2026-09-06T09:12:41.000Z"
+  }
+}
+```
+
+**Subscribe to it when a turn can outlive the process.** A webhook survives a restart and a redeploy,
+which polling in memory does not, and it costs nothing while nobody is deciding.
+
+**This example polls instead**, because it holds the turn open in memory anyway and polling keeps the
+whole flow in one function you can read top to bottom. That is a choice about the example, not a
+limit of the API. Polling reads the same entry the webhook announces:
 
 ```graphql
 type ThreadDiscussionToolCallApprovalEntryPayload {
@@ -376,9 +426,9 @@ want the next enum addition to stop your build.
 
 ## Gotchas
 
-**Pin the webhook target to `2026-08-19` or later.** `discussion.message_created` was added in that
-version. A target on an older one is silently never sent the event, and nothing anywhere reports an
-error.
+**Pin the webhook target to the exact version your `@team-plain/webhooks` requires**, `2026-09-06`
+for 1.9.0. `discussion.message_created` needs `2026-08-19` or newer to be sent at all, and a target
+older than that is silently never sent the event, with nothing anywhere reporting an error.
 
 **Return 200 immediately, then work.** Plain retries anything that is not a 2xx, and a real answer
 takes far longer than the delivery timeout. Answer the HTTP request first, do the work after.

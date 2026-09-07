@@ -3,7 +3,8 @@ import type { ApprovalOutcome, PlainClient } from "./plain.ts";
 
 /** How long to wait for a human before giving up on a card and leaving it open. */
 const WAIT_TIMEOUT_MS = 15 * 60_000;
-/** Polling, because there is no webhook for an approval being resolved yet. */
+// Polling by choice, not necessity: discussion.tool_call_approval_resolved would do it too, but
+// this turn is already held open in memory and one readable function beats a second subscription.
 const POLL_INTERVAL_MS = 3_000;
 
 export type GatedAction = {
