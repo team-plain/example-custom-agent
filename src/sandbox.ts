@@ -9,7 +9,7 @@ export type SandboxConfig = {
   snapshotID: string | undefined;
 };
 
-// The names match team-plain/agent-sandbox, so the same four values work in both projects.
+// The names match team-plain/agent-sandbox, so the same values work in both projects.
 const CREDENTIAL_VARS = [
   "VERCEL_BEARER_TOKEN",
   "VERCEL_SANDBOX_TEAM_ID",
@@ -133,7 +133,7 @@ export class SandboxExecutor implements Executor {
     await Promise.allSettled(sandboxes.map(async (pending) => (await pending).stop()));
   }
 
-  private async attempt({ discussionID, argv, signal }: ExecutionRequest): Promise<Execution> {
+  private async attempt({ discussionID, argv, signal, timeoutMs }: ExecutionRequest): Promise<Execution> {
     const [cmd, ...args] = argv;
     if (cmd === undefined) throw new Error("the provider produced an empty command");
 
@@ -143,6 +143,9 @@ export class SandboxExecutor implements Executor {
       args,
       cwd: WORKDIR,
       env: forwardedEnv(),
+      // signal only stops this side waiting. timeoutMs is enforced by the sandbox at exec time
+      // and SIGKILLs the process, so a timed-out turn does not leave a CLI running on the bill.
+      timeoutMs,
       signal,
     });
 
@@ -171,8 +174,8 @@ export class SandboxExecutor implements Executor {
       timeout: SANDBOX_TIMEOUT_MS,
       persistent: true,
       snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
-      // Fires only on a genuine create, not on a retrieve and not on a resume. Nothing may throw
-      // in here: getOrCreate swallows it. Recording the fact is all this does.
+      // Fires only on a genuine create, not on a retrieve and not on a resume. Recording the
+      // fact is all this does, so it cannot be the thing that fails.
       onCreate: async () => {
         this.created.add(discussionID);
       },
@@ -191,11 +194,9 @@ export class SandboxExecutor implements Executor {
   }
 }
 
-/**
- * Installs the CLI unless it is already there, once per sandbox handle. Deliberately not the
- * getOrCreate `onCreate` hook: the SDK swallows what that hook throws, so a failed install would
- * surface one turn at a time as "executable file not found".
- */
+// Installs the CLI unless it is already there, once per sandbox handle. Deliberately not inside
+// the getOrCreate `onCreate` hook: that hook fires only on a genuine create, so an install that
+// fails once leaves the sandbox existing and empty and no later turn ever retries it.
 async function ensureCli(sandbox: Sandbox): Promise<void> {
   if (await onPath(sandbox)) return;
 

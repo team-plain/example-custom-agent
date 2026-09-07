@@ -109,8 +109,8 @@ export class Runner {
     // The argv is the whole command, so both runtimes run the same one and only differ in where.
     const argv = [this.provider.bin, ...this.provider.args(full, sessionID, !!existing)];
 
-    // One timeout policy for every runtime: the abort stops a local process and a sandbox
-    // command alike, and a killed local run reports an exit code rather than throwing.
+    // One budget, enforced twice over: the abort stops this side waiting, and the executor
+    // kills the process where it actually runs. A killed local run reports an exit code.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
@@ -122,6 +122,7 @@ export class Runner {
         discussionID,
         argv,
         signal: controller.signal,
+        timeoutMs: TIMEOUT_MS,
       }));
     } catch (err) {
       if (controller.signal.aborted) throw new Error(this.timeoutMessage());

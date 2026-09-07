@@ -289,8 +289,16 @@ export async function runServe(
 
   // A sandbox keeps running after this process exits, and it bills for the time. Stopping is not
   // deleting: the next turn resumes the same one with its session files intact.
+  let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
+      // Double Ctrl-C is how a dev server normally gets stopped. Without the guard the second
+      // one exits 0 while the first one's stop requests are still in flight, leaking the VMs.
+      if (closing) {
+        console.log(fail("still stopping sandboxes, leaving them running"));
+        process.exit(1);
+      }
+      closing = true;
       void runner.close().finally(() => process.exit(0));
     });
   }
