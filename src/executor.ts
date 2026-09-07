@@ -9,6 +9,8 @@ export type ExecutionRequest = {
   argv: string[];
   /** Aborted when the turn runs past its timeout. */
   signal: AbortSignal;
+  /** The same budget as a number, for runtimes that enforce it where the process actually runs. */
+  timeoutMs: number;
 };
 
 /** Runs one turn's CLI command and collects its output, wherever that command runs. */
