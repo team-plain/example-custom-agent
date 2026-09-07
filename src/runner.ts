@@ -19,12 +19,8 @@ const SESSIONS_DIR = join(ROOT, "sessions");
 
 const TIMEOUT_MS = 180_000;
 
-/**
- * Maps a Plain discussion onto a CLI session so a discussion behaves like one conversation instead
- * of a series of unrelated questions. A file per discussion inside a directory per provider: two
- * discussions being answered at once would otherwise race on one shared file, and a codex thread id
- * means nothing to pi.
- */
+// A file per discussion inside a directory per provider: two discussions answered at once would
+// otherwise race on one shared file, and a codex thread id means nothing to pi.
 class SessionStore {
   private constructor(private readonly dir: string) {}
 

@@ -39,14 +39,9 @@ export class PlainClient {
     this.sdk = new PlainSDK({ apiKey, apiUrl: API_URL });
   }
 
-  /**
-   * Identifies which machine user this API key belongs to. The agent needs its own id to tell the
-   * discussions it owns from Sidekick's and from other agents'.
-   *
-   * `isCustomAgent` is the Custom agent toggle. Do not reach for `type` instead: it answers
-   * AI_AGENT or API_USER, which is a different question, and a working custom agent can be
-   * API_USER.
-   */
+  // The agent needs its own id to tell the discussions it owns from Sidekick's and other agents'.
+  // `isCustomAgent` is the Custom agent toggle; `type` answers AI_AGENT or API_USER, which is a
+  // different question, and a working custom agent can be API_USER.
   async myMachineUser(): Promise<MachineUser> {
     const me = await withTimeout(this.sdk.query.myMachineUser(), REQUEST_TIMEOUT_MS);
     return { id: me.id, fullName: me.fullName, isCustomAgent: me.isCustomAgent };
@@ -103,14 +98,9 @@ export class PlainClient {
     return result.discussionMessage.id;
   }
 
-  /**
-   * Not optional housekeeping: Plain runs no session for a custom agent, so without these calls the
-   * discussion shows as permanently idle. Settling on IDLE is also what marks the discussion unread
-   * so the answer surfaces.
-   *
-   * Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`, which takes a
-   * thread id and sets the status somewhere else entirely.
-   */
+  // Not optional housekeeping: Plain runs no session for a custom agent, so without these calls
+  // the discussion shows as permanently idle. It does not touch the unread marker, which the
+  // reply sets. Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`.
   async updateAgentStatus(discussionID: string, status: "IN_PROGRESS" | "IDLE"): Promise<void> {
     const result = await withTimeout(
       this.sdk.mutation.updateDiscussionAgentStatus({
@@ -180,13 +170,9 @@ export class PlainClient {
     assertNoMutationError("requestDiscussionToolCallApproval", result.error ?? null);
   }
 
-  /**
-   * Reads the approval entry for one call. Null while the human has not decided yet.
-   *
-   * Polling, because there is no webhook for an approval being resolved yet. `last` rather than
-   * `first`: the approval is at the end of the timeline, and a long discussion would push it off a
-   * page taken from the start.
-   */
+  // Reads the approval entry for one call. Null while the human has not decided yet. `last` rather
+  // than `first`: the approval is at the end of the timeline, and a long discussion would push it
+  // off a page taken from the start.
   async approvalOutcome(discussionID: string, toolCallID: string): Promise<ApprovalOutcome | null> {
     return withTimeout(
       (async () => {

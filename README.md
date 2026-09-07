@@ -59,7 +59,7 @@ Written in TypeScript, run with [Bun](https://bun.sh).
    [Settings → Webhooks → Add webhook target](https://app.plain.com/~/settings/webhooks/add/).
 
    Pointed at `$PUBLIC_URL/plain/webhook`, subscribed to `discussion.message_created`, on version
-   `2026-08-19` or later.
+   `2026-09-06`. The version has to match `@team-plain/webhooks` exactly, see below.
 
 ## Running it
 
@@ -76,7 +76,8 @@ The system prompt is `prompt.md`, prepended to the first message of each discuss
 change what the agent is and what it will do.
 
 Each turn runs `IN_PROGRESS` → post the answer → `IDLE`, and a failed turn posts the error and still
-settles on `IDLE`. Settling last is what marks the discussion unread, so the answer surfaces.
+settles on `IDLE`. Posting the answer is what marks the discussion unread, not the status change, so
+settle last only to stop the status claiming the agent is still working.
 
 Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent has answered, via
 `changeThreadDiscussionStatus`. It is off by default, because this example cannot tell a finished
@@ -91,7 +92,8 @@ conversation from a pause and a resolved discussion drops out of the customer's 
 | `@team-plain/webhooks` | required target version |
 | --- | --- |
 | 1.7.1 | `2026-08-19` |
-| 1.8.0 | `2026-08-31` (what this example uses) |
+| 1.8.0 | `2026-08-31` |
+| 1.9.0 | `2026-09-06` (what this example uses) |
 
 A mismatch does not look like a version problem. Plain delivers, your server answers **401**, and the
 discussion sits on "thinking" forever. Only your own log says why. Change both together.
@@ -108,6 +110,10 @@ because a gated failure notice can leave a broken discussion silent.
 
 The agent gates its own writes rather than tool calls, because it delegates thinking to a CLI and never
 sees a tool call. A real agent gates tool calls the same way. [PROTOCOL.md](PROTOCOL.md) has the flow.
+
+It learns the decision by polling, which keeps the flow readable in one function. There are webhooks
+for it, `discussion.tool_call_approval_requested` and `discussion.tool_call_approval_resolved`, and
+they are the better choice once a turn can outlive the process. PROTOCOL.md has both payloads.
 
 `PLAIN_API_URL` overrides the API endpoint, which defaults to production. Set it to run this against
 another stage.
