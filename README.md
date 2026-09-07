@@ -6,8 +6,8 @@ Pick a custom agent and power the Ask Sidekick surface with your own agent.
 
 ## How it works
 Plain fires a webhook at your server and waits for you to write the reply
-back. It answers by running the `claude` CLI on whatever machine it is running
-on, then posts the answer into the discussion.
+back. It answers by running the `claude` CLI, then posts the answer into the
+discussion.
 ```
 ┌─────────────────────┐                              ┌─────────────────────┐
 │        Plain        │  discussion.message_created  │     this process    │
@@ -16,17 +16,21 @@ on, then posts the answer into the discussion.
 │                     │ <─────────────────────────── │                     │
 └─────────────────────┘    sendDiscussionMessage     └──────────┬──────────┘
                                                                 │
-                                                                v
-                                                     ┌─────────────────────┐
-                                                     │     Claude Code     │
-                                                     │      claude -p      │
-                                                     └─────────────────────┘
+                                          AGENT_RUNTIME decides where
+                                                                │
+                                         ┌──────────────────────┴───────────┐
+                                         v                                  v
+                              ┌─────────────────────┐          ┌─────────────────────┐
+                              │  local (default)    │          │   vercel-sandbox    │
+                              │     claude -p       │          │  claude -p, in a VM │
+                              │   on this machine   │          │  one per discussion │
+                              └─────────────────────┘          └─────────────────────┘
 ```
 
-Claude runs with `--permission-mode auto` and no sandbox. The prompt is whatever someone typed into
-a discussion, which means anyone in your workspace effectively has a shell on this machine. 
-
-It's recommended to run this in a sandbox when deployed in a production environment.
+Claude runs with `--permission-mode auto`, and the prompt is whatever someone typed into a
+discussion. **On the default `local` runtime that means anyone in your workspace effectively has a
+shell on this machine.** Set `AGENT_RUNTIME=vercel-sandbox` in production, which is the same command
+in a throwaway VM instead. See [Where the CLI runs](#where-the-cli-runs).
 
 Written in TypeScript, run with [Bun](https://bun.sh).
 
@@ -51,7 +55,8 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 3. Get a public https URL that reaches this process. To run locally, use `ngrok http 8081`.
 
    Otherwise it's wherever you deploy it, which has to be somewhere that holds a long-running
-   process and has the `claude` CLI installed.
+   process. It also needs the `claude` CLI installed, unless you set `AGENT_RUNTIME=vercel-sandbox`
+   and let the sandbox carry it.
 
    Put the URL in `.env` as `PUBLIC_URL`.
 
@@ -128,6 +133,55 @@ bun run serve --provider codex     # claude (default), codex, pi, opencode
 ```
 
 Sessions are stored per provider, one file per discussion, in `sessions/<provider>/`.
+
+## Where the CLI runs
+
+`AGENT_RUNTIME` picks the runtime. It defaults to `local`, so nothing changes until you set it.
+
+| | `local` (default) | `vercel-sandbox` |
+| --- | --- | --- |
+| Where the CLI runs | this machine | a Vercel Sandbox, one per discussion |
+| Needs the CLI installed here | yes | no |
+| Sees the directory you started in | yes | no, the sandbox starts empty |
+| Authenticates as | your own CLI login | `ANTHROPIC_API_KEY` from `.env` |
+| Providers | all four | `claude` only |
+
+The command is identical in both. Only the machine it runs on differs, so the prompt, the system
+prompt and `--resume` behave the same either way.
+
+```
+AGENT_RUNTIME=vercel-sandbox
+VERCEL_BEARER_TOKEN=...
+VERCEL_SANDBOX_TEAM_ID=...
+VERCEL_SANDBOX_PROJECT_ID=...
+ANTHROPIC_API_KEY=...
+```
+
+**One sandbox per discussion, and it is persistent.** The CLI's own session files live inside it, so
+`--resume` on the second turn finds the first. Its session lasts ten minutes, which is a lifetime and
+not an idle timer, and each turn asks to extend it. When it does stop, Vercel resumes it with its
+files on the next turn: stopping is not deleting.
+
+**After a week the sandbox is collected, and the discussion starts a new session rather than
+breaking.** A replaced sandbox holds none of the CLI's files, so the agent notices and opens a fresh
+session instead of resuming an id that points at nothing. The discussion keeps working, without the
+earlier context.
+
+**A sandbox holds none of your logins**, which is why `ANTHROPIC_API_KEY` is required here and not
+locally. It is passed into the sandbox per command and never printed. `ANTHROPIC_AUTH_TOKEN` and
+`ANTHROPIC_BASE_URL` are forwarded the same way, if you go through a gateway.
+
+**Set `VERCEL_SANDBOX_SNAPSHOT_ID` if you have a snapshot with the CLI in it.** Without one, each new
+sandbox runs `npm install -g @anthropic-ai/claude-code` at first start, and the discussion's first
+turn waits for it. Either way the sandbox is checked for `claude` on PATH before any turn runs, so a
+snapshot built without it fails loudly rather than one turn at a time.
+
+**The sandbox isolates the machine, not the network.** It gets Vercel's default full internet
+access, which is what lets it install the CLI and reach the model. If the prompt should not be able
+to reach your internal services, give the sandbox a network policy: `@vercel/sandbox` takes one at
+creation, in `src/sandbox.ts`.
+
+`bun run check` prints which runtime is active and what it is missing.
 
 ## Building your own
 
