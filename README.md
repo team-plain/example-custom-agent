@@ -76,7 +76,8 @@ The system prompt is `prompt.md`, prepended to the first message of each discuss
 change what the agent is and what it will do.
 
 Each turn runs `IN_PROGRESS` → post the answer → `IDLE`, and a failed turn posts the error and still
-settles on `IDLE`. Settling last is what marks the discussion unread, so the answer surfaces.
+settles on `IDLE`. Posting the answer is what marks the discussion unread, not the status change, so
+settle last only to stop the status claiming the agent is still working.
 
 Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent has answered, via
 `changeThreadDiscussionStatus`. It is off by default, because this example cannot tell a finished
