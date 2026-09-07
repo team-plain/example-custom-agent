@@ -103,14 +103,9 @@ export class PlainClient {
     return result.discussionMessage.id;
   }
 
-  /**
-   * Not optional housekeeping: Plain runs no session for a custom agent, so without these calls the
-   * discussion shows as permanently idle. Settling on IDLE is also what marks the discussion unread
-   * so the answer surfaces.
-   *
-   * Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`, which takes a
-   * thread id and sets the status somewhere else entirely.
-   */
+  // Not optional housekeeping: Plain runs no session for a custom agent, so without these calls
+  // the discussion shows as permanently idle. It does not touch the unread marker, which the
+  // reply sets. Note this is the discussion mutation, not the SDK's `updateThreadAgentStatus`.
   async updateAgentStatus(discussionID: string, status: "IN_PROGRESS" | "IDLE"): Promise<void> {
     const result = await withTimeout(
       this.sdk.mutation.updateDiscussionAgentStatus({
