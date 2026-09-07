@@ -218,7 +218,12 @@ curl -sX POST https://core-api.uk.plain.com/graphql/v1 \
   }'
 ```
 
-The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`. Settle on `IDLE` last: that is what marks the discussion unread, so the answer surfaces.
+The sequence per turn is `IN_PROGRESS` → post the answer → `IDLE`.
+
+**Posting the answer is what marks the discussion unread**, in the same transaction as the message.
+A status change never touches the marker: an `AGENT_SESSION` is created already `IDLE`, so an
+agent's first settle is not a transition at all. Settle on `IDLE` last anyway, so the status stops
+claiming the agent is working while a finished answer sits there.
 
 Settle on `IDLE` when the turn fails too. Post the failure as a message first, so the customer sees
 what went wrong, then go `IDLE`: the message you just posted is the request for input, so there is
