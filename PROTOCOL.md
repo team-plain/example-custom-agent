@@ -347,6 +347,14 @@ type DiscussionToolCallApprovalResolvedPayload = {
   resolvedBy: InternalActor;
   resolvedAt: string;
 };
+
+// Tagged on actorType, and the tag is the only way to know which id you have. A machine user
+// carries machineUserId and no userId, so branch on the tag before reading anything else.
+type InternalActor =
+  | { actorType: "user"; userId: string }
+  | { actorType: "machineUser"; machineUserId: string }
+  | { actorType: "system"; system: string }
+  | { actorType: "UNKNOWN" };
 ```
 
 ```json
@@ -370,7 +378,7 @@ type DiscussionToolCallApprovalResolvedPayload = {
     "status": "DENIED",
     "justification": "I drafted an answer and believe it is ready.",
     "reviewerNote": "Too blunt, and we have not confirmed the refund yet.",
-    "resolvedBy": { "userId": "u_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
+    "resolvedBy": { "actorType": "user", "userId": "u_01ARZ3NDEKTSV4RRFFQ69G5FAV" },
     "resolvedAt": "2026-09-06T09:12:41.000Z"
   }
 }
