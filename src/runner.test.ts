@@ -11,12 +11,22 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // command a turn would run without a CLI, a sandbox or a network.
 class RecordingExecutor implements Executor {
   readonly calls: ExecutionRequest[] = [];
+  readonly prepared: string[] = [];
   closed = 0;
+  /** Set to make the next prepare() report a place with no CLI state, as a new sandbox would. */
+  fresh = false;
 
   constructor(
     readonly runtime: RuntimeName,
     private readonly stdout: string,
   ) {}
+
+  async prepare(discussionID: string): Promise<{ fresh: boolean }> {
+    this.prepared.push(discussionID);
+    const fresh = this.fresh;
+    this.fresh = false;
+    return { fresh };
+  }
 
   async run(request: ExecutionRequest): Promise<Execution> {
     this.calls.push(request);
@@ -112,6 +122,42 @@ describe("command construction", () => {
     const strip = (argv: string[]) => argv.filter((arg) => !UUID.test(arg));
     expect(strip(sandbox.lastArgv)).toEqual(strip(localArgv));
     expect(sandbox.calls[0]?.discussionID).toBe(id);
+  });
+
+  // A sandbox that expired is replaced by an empty one, and the stored session id then points at
+  // nothing. Resuming it would fail every turn, so a fresh place has to start a new session.
+  test("a fresh place ignores the stored session instead of resuming into nothing", async () => {
+    const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
+    const runner = await Runner.create("claude", executor);
+    const id = track(discussionID());
+
+    await runner.ask(id, "first");
+    const opened = executor.lastArgv[executor.lastArgv.indexOf("--session-id") + 1];
+    expect(await runner.isResuming(id)).toBe(true);
+
+    executor.fresh = true;
+    await runner.ask(id, "after the sandbox was replaced");
+
+    const argv = executor.lastArgv;
+    expect(argv).not.toContain("--resume");
+    expect(argv).toContain("--session-id");
+    expect(argv[argv.indexOf("--session-id") + 1]).not.toBe(opened);
+
+    // The turn stores the new id, so the turn after this one resumes again.
+    executor.fresh = false;
+    await runner.ask(id, "and the next one");
+    expect(executor.lastArgv).toContain("--resume");
+  });
+
+  test("prepare runs before the command is built, once per turn", async () => {
+    const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
+    const runner = await Runner.create("claude", executor);
+    const id = track(discussionID());
+
+    await runner.ask(id, "one");
+    await runner.ask(id, "two");
+
+    expect(executor.prepared).toEqual([id, id]);
   });
 
   test("the discussion id reaches the executor, so a sandbox can be scoped to it", async () => {

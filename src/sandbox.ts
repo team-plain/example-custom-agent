@@ -94,17 +94,34 @@ export class SandboxExecutor implements Executor {
 
   private readonly open = new Map<string, Promise<Sandbox>>();
 
+  // Discussions whose sandbox this process created and whose first turn has not run yet.
+  private readonly created = new Set<string>();
+
   constructor(private readonly config: SandboxConfig) {}
+
+  async prepare(discussionID: string): Promise<{ fresh: boolean }> {
+    const sandbox = await this.resolve(discussionID);
+
+    // Best effort. The sandbox timeout is a session lifetime and not an idle timer, so a turn
+    // starting near the end of one could be cut off mid-command. A refusal is survivable: a
+    // stopped sandbox resumes with its files on the next turn.
+    await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS).catch(() => undefined);
+
+    // Reported once, and only for a sandbox this process created: the turn that follows writes a
+    // session into it, and every turn after that has one to resume.
+    return { fresh: this.created.delete(discussionID) };
+  }
 
   async run(request: ExecutionRequest): Promise<Execution> {
     try {
       return await this.attempt(request);
     } catch (err) {
-      // A handle outlives the sandbox it points at once the snapshot expires. Re-resolving costs
-      // one round trip and is the difference between a stale discussion and a dead one.
-      if (request.signal.aborted) throw err;
+      // Evict, never retry. runCommand can fail after the CLI has already started, and running
+      // the turn a second time against the same session would duplicate the prompt. The next
+      // turn re-resolves, so a handle cannot stay stale for longer than one failure.
       this.open.delete(request.discussionID);
-      return await this.attempt(request);
+      this.created.delete(request.discussionID);
+      throw err;
     }
   }
 
@@ -154,6 +171,11 @@ export class SandboxExecutor implements Executor {
       timeout: SANDBOX_TIMEOUT_MS,
       persistent: true,
       snapshotExpiration: SNAPSHOT_EXPIRATION_MS,
+      // Fires only on a genuine create, not on a retrieve and not on a resume. Nothing may throw
+      // in here: getOrCreate swallows it. Recording the fact is all this does.
+      onCreate: async () => {
+        this.created.add(discussionID);
+      },
     };
 
     const sandbox =

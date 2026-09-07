@@ -14,6 +14,12 @@ export type ExecutionRequest = {
 /** Runs one turn's CLI command and collects its output, wherever that command runs. */
 export type Executor = {
   readonly runtime: RuntimeName;
+  /**
+   * Readies the place this turn will run in, before the command is built. `fresh` means nothing
+   * the CLI wrote on an earlier turn survives there, so a stored session id can no longer be
+   * resumed and the turn has to start a new one.
+   */
+  prepare(discussionID: string): Promise<{ fresh: boolean }>;
   run(request: ExecutionRequest): Promise<Execution>;
   /** Releases what this executor holds. Called on shutdown, once. */
   close(): Promise<void>;
@@ -21,6 +27,11 @@ export type Executor = {
 
 export class LocalExecutor implements Executor {
   readonly runtime = "local" as const;
+
+  // The CLI keeps its sessions on this machine, so they outlive any one turn.
+  async prepare(): Promise<{ fresh: boolean }> {
+    return { fresh: false };
+  }
 
   async run({ argv, signal }: ExecutionRequest): Promise<Execution> {
     // No cwd: the CLI starts in whatever directory this process was launched from, so pointing

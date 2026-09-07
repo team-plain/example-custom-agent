@@ -96,7 +96,11 @@ export class Runner {
 
   /** Runs one turn against the discussion's session, resuming it when one already exists. */
   async ask(discussionID: string, prompt: string): Promise<string> {
-    const existing = await this.sessions.get(discussionID);
+    // Before the session is read, not after: a sandbox that was just created holds none of the
+    // CLI's files, so resuming the id on disk would fail every turn from here on.
+    const { fresh } = await this.executor.prepare(discussionID);
+    const stored = await this.sessions.get(discussionID);
+    const existing = fresh ? undefined : stored;
     const sessionID = existing ?? randomUUID();
     const full = existing || this.instructions === ""
       ? prompt

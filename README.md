@@ -158,8 +158,14 @@ ANTHROPIC_API_KEY=...
 ```
 
 **One sandbox per discussion, and it is persistent.** The CLI's own session files live inside it, so
-`--resume` on the second turn finds the first. A sandbox stops on its own after ten minutes idle and
-Vercel resumes it, with its files, when the next turn arrives. Stopping is not deleting.
+`--resume` on the second turn finds the first. Its session lasts ten minutes, which is a lifetime and
+not an idle timer, and each turn asks to extend it. When it does stop, Vercel resumes it with its
+files on the next turn: stopping is not deleting.
+
+**After a week the sandbox is collected, and the discussion starts a new session rather than
+breaking.** A replaced sandbox holds none of the CLI's files, so the agent notices and opens a fresh
+session instead of resuming an id that points at nothing. The discussion keeps working, without the
+earlier context.
 
 **A sandbox holds none of your logins**, which is why `ANTHROPIC_API_KEY` is required here and not
 locally. It is passed into the sandbox per command and never printed. `ANTHROPIC_AUTH_TOKEN` and
