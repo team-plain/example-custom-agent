@@ -100,15 +100,10 @@ export class SandboxExecutor implements Executor {
   constructor(private readonly config: SandboxConfig) {}
 
   async prepare(discussionID: string): Promise<{ fresh: boolean }> {
-    const sandbox = await this.resolve(discussionID);
+    await this.resolve(discussionID);
 
-    // Best effort. The sandbox timeout is a session lifetime and not an idle timer, so a turn
-    // starting near the end of one could be cut off mid-command. A refusal is survivable: a
-    // stopped sandbox resumes with its files on the next turn.
-    await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS).catch(() => undefined);
-
-    // Reported once, and only for a sandbox this process created: the turn that follows writes a
-    // session into it, and every turn after that has one to resume.
+    // Reported once, and only for a sandbox this process created. Cheap to ask twice in a turn:
+    // the handle is cached, and the caller records the answer on disk before consuming it.
     return { fresh: this.created.delete(discussionID) };
   }
 
@@ -138,6 +133,12 @@ export class SandboxExecutor implements Executor {
     if (cmd === undefined) throw new Error("the provider produced an empty command");
 
     const sandbox = await this.resolve(discussionID);
+
+    // Best effort. The sandbox timeout is a session lifetime and not an idle timer, so a turn
+    // starting near the end of one could be cut off. A refusal is survivable: a stopped sandbox
+    // resumes with its files on the next turn.
+    await sandbox.extendTimeout(SANDBOX_TIMEOUT_MS).catch(() => undefined);
+
     const finished = await sandbox.runCommand({
       cmd,
       args,

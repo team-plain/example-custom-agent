@@ -28,8 +28,15 @@ class RecordingExecutor implements Executor {
     return { fresh };
   }
 
+  /** Set to make the next run() throw, as a dropped connection mid-turn would. */
+  failNext = false;
+
   async run(request: ExecutionRequest): Promise<Execution> {
     this.calls.push(request);
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("the sandbox went away mid-turn");
+    }
     return { stdout: this.stdout, stderr: "", exitCode: 0 };
   }
 
@@ -149,7 +156,44 @@ describe("command construction", () => {
     expect(executor.lastArgv).toContain("--resume");
   });
 
-  test("prepare runs before the command is built, once per turn", async () => {
+  // Bugbot: the freshness flag lived only in memory and was consumed by the first read, so a turn
+  // that failed after consuming it left the stale id on disk and every later turn resumed nothing.
+  test("a fresh place clears the stored session even when the turn then fails", async () => {
+    const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
+    const runner = await Runner.create("claude", executor);
+    const id = track(discussionID());
+
+    await runner.ask(id, "first");
+    expect(await runner.isResuming(id)).toBe(true);
+
+    // The replacement is seen, and this turn dies before it can store a new session.
+    executor.fresh = true;
+    executor.failNext = true;
+    await expect(runner.ask(id, "after replacement")).rejects.toThrow();
+
+    // The stale id is already gone, so the next turn cannot resume into a sandbox that lacks it.
+    expect(await runner.isResuming(id)).toBe(false);
+    const recovered = await runner.ask(id, "next");
+    expect(recovered).toBe("hi");
+    expect(executor.lastArgv).not.toContain("--resume");
+    expect(executor.lastArgv).toContain("--session-id");
+  });
+
+  // Same defect from the other direction: freshness must reach isResuming, which is what the
+  // prompt builder asks, or a replaced sandbox gets a bare question with no thread context.
+  test("isResuming reports false on a fresh place, so the prompt is rebuilt", async () => {
+    const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
+    const runner = await Runner.create("claude", executor);
+    const id = track(discussionID());
+
+    await runner.ask(id, "first");
+    expect(await runner.isResuming(id)).toBe(true);
+
+    executor.fresh = true;
+    expect(await runner.isResuming(id)).toBe(false);
+  });
+
+  test("prepare runs once per ask, before the command is built", async () => {
     const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
     const runner = await Runner.create("claude", executor);
     const id = track(discussionID());

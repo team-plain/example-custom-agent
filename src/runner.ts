@@ -49,6 +49,11 @@ class SessionStore {
   async put(discussionID: string, sessionID: string): Promise<void> {
     await Bun.write(this.path(discussionID), `${sessionID}\n`);
   }
+
+  // delete() throws ENOENT when nothing was stored, which is the ordinary case here.
+  async clear(discussionID: string): Promise<void> {
+    await Bun.file(this.path(discussionID)).delete().catch(() => undefined);
+  }
 }
 
 export class Runner {
@@ -87,7 +92,18 @@ export class Runner {
   }
 
   async isResuming(discussionID: string): Promise<boolean> {
-    return (await this.sessions.get(discussionID)) !== undefined;
+    return (await this.resumableSession(discussionID)) !== undefined;
+  }
+
+  // The stored id is only worth resuming if the place holding the CLI's files still has them.
+  // Clearing on the spot rather than after the turn is what makes this survive a failed turn or
+  // a restart, and it is why the prompt builder and the turn cannot disagree.
+  private async resumableSession(discussionID: string): Promise<string | undefined> {
+    const { fresh } = await this.executor.prepare(discussionID);
+    const stored = await this.sessions.get(discussionID);
+    if (!fresh) return stored;
+    if (stored !== undefined) await this.sessions.clear(discussionID);
+    return undefined;
   }
 
   private timeoutMessage(): string {
@@ -96,11 +112,7 @@ export class Runner {
 
   /** Runs one turn against the discussion's session, resuming it when one already exists. */
   async ask(discussionID: string, prompt: string): Promise<string> {
-    // Before the session is read, not after: a sandbox that was just created holds none of the
-    // CLI's files, so resuming the id on disk would fail every turn from here on.
-    const { fresh } = await this.executor.prepare(discussionID);
-    const stored = await this.sessions.get(discussionID);
-    const existing = fresh ? undefined : stored;
+    const existing = await this.resumableSession(discussionID);
     const sessionID = existing ?? randomUUID();
     const full = existing || this.instructions === ""
       ? prompt
