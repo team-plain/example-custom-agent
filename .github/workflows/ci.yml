@@ -19,3 +19,20 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run test
+
+  # Its own job because example-eve-agent is outside the Bun workspace: eve needs npm and Node 24.
+  # --no-workspaces on both, or npm walks up and installs the repo root instead.
+  eve:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/example-eve-agent
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: packages/example-eve-agent/package-lock.json
+      - run: npm ci --no-workspaces
+      - run: npm run typecheck --no-workspaces

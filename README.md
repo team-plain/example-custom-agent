@@ -20,8 +20,8 @@ call, so you can build this in a language none of these packages use.
 | `example-eve-agent` | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and sandboxed compute handed to you rather than hand-rolled. |
 | `example-aisdk-agent` | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop, and to see both of Plain's agent surfaces side by side on the raw API. |
 
-**Only `example-coding-agent` is in the repo today.** The other two are in progress and land as
-their own packages under `packages/`. This table is the shape they land into.
+**`example-aisdk-agent` is not in the repo yet** and lands as its own package under `packages/`.
+This table is the shape it lands into.
 
 Setup is per package: each one has its own `README.md` and its own `.env`, because what they need
 differs. Start there, not here.
@@ -47,10 +47,17 @@ both, from one shared core, which makes it the one place to compare them.
 package.json                        Bun workspace root
 packages/
   example-coding-agent/             an agent CLI does the thinking
+  example-eve-agent/                eve runs the agent (npm + Node 24, see below)
 ```
 
-`bun install` from the root or from any package resolves the whole workspace. `bun run test` and
-`bun run typecheck` at the root run across every package.
+`bun install` at the root covers the Bun packages, and root `bun run test` and `bun run typecheck`
+fan out across them.
+
+**`example-eve-agent` is deliberately outside the Bun workspace**, because eve requires npm and
+Node 24: its CLI refuses to run under Bun, it pins TypeScript 7 against the other package's 5, and
+it ships an npm lockfile. So the root `workspaces` list names packages explicitly rather than
+globbing, since Bun ignores a negated pattern. Install and run that one from its own directory with
+`npm ... --no-workspaces`; its README explains why the flag is needed.
 
 ## The approval gate
 

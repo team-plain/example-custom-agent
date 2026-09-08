@@ -1,5 +1,7 @@
 node_modules
 .env*
+# .env.example is the template and must be committed; .env* above would swallow it.
+!.env.example
 .eve
 .vercel
 .next
