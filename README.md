@@ -16,7 +16,7 @@ call, so you can build this in a language none of these packages use.
 
 | Package | Agent built with | Reach for it when |
 | --- | --- | --- |
-| [`example-coding-agent`](packages/example-coding-agent) | an agent CLI you already run (`claude`, `codex`, `pi`, `opencode`) | you want the shortest path to a working agent, and the reasoning already happens in a CLI you trust. No model API key of its own. |
+| [`example-coding-agent`](example-coding-agent) | an agent CLI you already run (`claude`, `codex`, `pi`, `opencode`) | you want the shortest path to a working agent, and the reasoning already happens in a CLI you trust. No model API key of its own. |
 | `example-eve-agent` | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and sandboxed compute handed to you rather than hand-rolled. |
 | `example-aisdk-agent` | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop, and to see both of Plain's agent surfaces side by side on the raw API. |
 
@@ -45,10 +45,9 @@ both, from one shared core, which makes it the one place to compare them.
 
 ```
 package.json                        Bun workspace root
-packages/
-  example-coding-agent/             an agent CLI does the thinking
-  example-eve-agent/                eve runs the agent (npm + Node 24, see below)
-  example-aisdk-agent/              the AI SDK directly, and both surfaces
+example-coding-agent/               an agent CLI does the thinking
+example-eve-agent/                  eve runs the agent (npm + Node 24, see below)
+example-aisdk-agent/                the AI SDK directly, and both surfaces
 ```
 
 `bun install` at the root covers the Bun packages, and root `bun run test` and `bun run typecheck`

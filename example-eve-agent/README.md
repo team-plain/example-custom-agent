@@ -5,7 +5,7 @@ framework. An agent here is a directory: a system prompt, a model config, one fi
 file per channel.
 
 Reach for this one when you want durable sessions and a model loop you do not have to write. For the
-other two shapes see the [repo README](../../README.md), and for the protocol this implements see
+other two shapes see the [repo README](../README.md), and for the protocol this implements see
 [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
 
 ## How it works
@@ -60,7 +60,7 @@ names packages one by one instead of globbing, because Bun ignores a negated pat
 root's `package.json`, and installs against that instead:
 
 ```bash
-cd packages/example-eve-agent
+cd example-eve-agent
 npm install --no-workspaces
 npm run typecheck --no-workspaces
 ```
@@ -84,7 +84,7 @@ files of it.
 2. Copy `.env.example` to `.env` in this directory.
 
    ```
-   cd packages/example-eve-agent
+   cd example-eve-agent
    cp .env.example .env
    ```
 

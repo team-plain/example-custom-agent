@@ -6,7 +6,7 @@ its own.
 
 Reach for this one when you want the shortest path from a webhook to a working agent, and you
 already trust a CLI to do the reasoning. For the other two shapes see the
-[repo README](../../README.md); for the protocol this implements, every event and every API call,
+[repo README](../README.md); for the protocol this implements, every event and every API call,
 see [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
 
 ## How it works
@@ -56,7 +56,7 @@ Written in TypeScript, run with [Bun](https://bun.sh).
 2. Copy `.env.example` to `.env`, in this directory.
 
    ```
-   cd packages/example-coding-agent
+   cd example-coding-agent
    cp .env.example .env
    ```
 

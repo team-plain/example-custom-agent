@@ -2,8 +2,8 @@
   "name": "example-custom-agent",
   "private": true,
   "workspaces": [
-    "packages/example-coding-agent",
-    "packages/example-aisdk-agent"
+    "example-coding-agent",
+    "example-aisdk-agent"
   ],
   "scripts": {
     "test": "bun run --filter '*' test",

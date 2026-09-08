@@ -4,7 +4,7 @@ Both of Plain's agent surfaces, built straight on the [Vercel AI SDK](https://ai
 framework in between. The lowest-level of the three packages, and the only one that does both
 surfaces, so it is where you can put them side by side.
 
-For the other shapes see the [repo README](../../README.md). The protocol is documented at
+For the other shapes see the [repo README](../README.md). The protocol is documented at
 [Build a support agent](https://www.plain.com/docs/agents/support-agent) and
 [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
 

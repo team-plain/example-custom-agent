@@ -26,14 +26,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/example-eve-agent
+        working-directory: example-eve-agent
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: packages/example-eve-agent/package-lock.json
+          cache-dependency-path: example-eve-agent/package-lock.json
       - run: npm ci --no-workspaces
       - run: npm run typecheck --no-workspaces
       # Not redundant with typecheck: it passed a channel that could not be imported at all.
