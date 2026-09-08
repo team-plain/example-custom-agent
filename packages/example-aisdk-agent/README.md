@@ -65,7 +65,7 @@ bun install
 cp .env.example .env
 ```
 
-Fill in `PLAIN_API_KEY`, `PLAIN_WEBHOOK_SECRET` and `ANTHROPIC_API_KEY`. **Unlike the other two
+Fill in `PLAIN_API_KEY`, `PLAIN_WEBHOOK_SECRET` and `OPENAI_API_KEY`. **Unlike the other two
 packages this one holds a model key**, because it calls the model itself rather than driving a CLI
 you have already logged in or a framework that brokers it.
 

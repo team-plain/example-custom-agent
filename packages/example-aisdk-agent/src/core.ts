@@ -1,4 +1,4 @@
-import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
 import { generateText, stepCountIs, type ToolSet } from "ai";
 
 /**
@@ -7,7 +7,8 @@ import { generateText, stepCountIs, type ToolSet } from "ai";
  * Nothing here consumes a stream: both surfaces post one finished message to Plain, so streaming
  * would only add a buffer to collect it back into a string.
  */
-export const DEFAULT_MODEL = "claude-sonnet-5";
+// A cheap, non-reasoning default, so running the example is not a budget decision.
+export const DEFAULT_MODEL = "gpt-4o-mini";
 
 // Enough for read, think, act, explain. A runaway loop costs money and posts nothing useful, so
 // the ceiling is low and deliberate rather than generous.
@@ -34,7 +35,7 @@ export type TurnRequest = {
  */
 export async function runTurn({ system, prompt, tools }: TurnRequest): Promise<Turn> {
   const result = await generateText({
-    model: anthropic(modelName()),
+    model: openai(modelName()),
     system,
     prompt,
     tools,
@@ -52,7 +53,6 @@ export function modelName(): string {
 
 /** Checked up front so a missing key fails at startup rather than mid-conversation. */
 export function assertModelCredential(env: Record<string, string | undefined> = process.env): void {
-  const set = (name: string) => (env[name] ?? "").trim() !== "";
-  if (set("ANTHROPIC_API_KEY") || set("ANTHROPIC_AUTH_TOKEN")) return;
-  throw new Error("set ANTHROPIC_API_KEY in .env (this package calls the model directly)");
+  if ((env.OPENAI_API_KEY ?? "").trim() !== "") return;
+  throw new Error("set OPENAI_API_KEY in .env (this package calls the model directly)");
 }

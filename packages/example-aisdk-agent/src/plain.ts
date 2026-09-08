@@ -61,6 +61,23 @@ export class Plain {
     return parts.join("\n\n");
   }
 
+  /**
+   * The newest customer-authored entry, which is what a suggested reply must hang off.
+   *
+   * Needed because the event that hands a thread to an agent is usually an assignment, which
+   * carries no message of its own. Entries come newest first, so the first match is the latest.
+   */
+  async latestCustomerEntryID(threadID: string): Promise<string | null> {
+    const thread = await this.timeout(this.sdk.query.thread({ threadId: threadID }));
+    if (thread === null) return null;
+
+    const page = await this.timeout(thread.timelineEntries({ first: TIMELINE_PAGE }));
+    for (const entry of page.nodes) {
+      if (entry.actor?.__typename === "CustomerActor") return entry.id;
+    }
+    return null;
+  }
+
   /** Sends a reply to the customer through whichever channel the thread uses. */
   async replyToThread(threadID: string, markdown: string): Promise<void> {
     const result = await this.timeout(

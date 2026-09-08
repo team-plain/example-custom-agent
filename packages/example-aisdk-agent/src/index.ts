@@ -9,9 +9,9 @@ const PROMPTS_DIR = join(import.meta.dir, "..", "prompts");
 const VARIABLES: [string, string][] = [
   ["PLAIN_API_KEY", "required"],
   ["PLAIN_WEBHOOK_SECRET", "required"],
-  ["ANTHROPIC_API_KEY", "required, this package calls the model directly"],
+  ["OPENAI_API_KEY", "required, this package calls the model directly"],
   ["PLAIN_API_URL", "optional, defaults to production"],
-  ["AGENT_MODEL", "optional, defaults to claude-sonnet-5"],
+  ["AGENT_MODEL", "optional, defaults to gpt-4o-mini"],
   ["PLAIN_SURFACE_SUPPORT", "optional, 0 to switch the customer-thread surface off"],
   ["PLAIN_SURFACE_INTERNAL", "optional, 0 to switch the Sidekick surface off"],
   ["PLAIN_GATE_SUPPORT", "optional, 0 to send replies instead of drafting them"],
