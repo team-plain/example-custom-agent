@@ -39,7 +39,7 @@ try {
   }
 
   const config = loadConfig();
-  const client = new PlainClient(config.apiKey);
+  const client = new PlainClient(config.apiKey, config.apiURL);
 
   const runtime = readRuntime();
 
