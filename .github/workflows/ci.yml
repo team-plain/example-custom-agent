@@ -1,0 +1,20 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned rather than latest: this repo is a reference implementation, so a reader who
+          # copies it should get the toolchain the tests were verified on.
+          bun-version: 1.2.10
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
