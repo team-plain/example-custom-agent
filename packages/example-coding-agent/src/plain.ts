@@ -1,5 +1,4 @@
 import { PlainClient as PlainSDK } from "@team-plain/graphql";
-import { API_URL } from "./config.ts";
 
 /** A stuck call must not hold a turn open, and no call here is slow enough to want longer. */
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -35,8 +34,8 @@ type ReturnedMutationError = {
 export class PlainClient {
   private readonly sdk: PlainSDK;
 
-  constructor(apiKey: string) {
-    this.sdk = new PlainSDK({ apiKey, apiUrl: API_URL });
+  constructor(apiKey: string, apiURL: string) {
+    this.sdk = new PlainSDK({ apiKey, apiUrl: apiURL });
   }
 
   // The agent needs its own id to tell the discussions it owns from Sidekick's and other agents'.

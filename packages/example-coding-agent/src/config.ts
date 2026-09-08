@@ -1,10 +1,6 @@
 import { join } from "node:path";
 
-/**
- * Prod unless PLAIN_API_URL says otherwise. The override exists so the approval flow can be driven
- * against dev-uk without editing the source; leave it unset and this example talks to production.
- */
-export const API_URL = (process.env.PLAIN_API_URL ?? "").trim() || "https://core-api.uk.plain.com/graphql/v1";
+const PROD_API_URL = "https://core-api.uk.plain.com/graphql/v1";
 
 export const DISCUSSION_MESSAGE_CREATED_EVENT = "discussion.message_created";
 
@@ -15,6 +11,8 @@ export const PORT = 8081;
 export type Config = {
   apiKey: string;
   secret: string;
+  /** Prod unless PLAIN_API_URL says otherwise. Read after .env loads, not at import time. */
+  apiURL: string;
   publicURL: string;
   /** Opt in to the agent resolving its own discussion once it has answered. Off unless asked for. */
   resolveWhenDone: boolean;
@@ -64,6 +62,7 @@ export function loadConfig(): Config {
   return {
     apiKey,
     secret,
+    apiURL: (process.env.PLAIN_API_URL ?? "").trim() || PROD_API_URL,
     publicURL: (process.env.PUBLIC_URL ?? "").replace(/\/+$/, ""),
     resolveWhenDone,
     gated: {
