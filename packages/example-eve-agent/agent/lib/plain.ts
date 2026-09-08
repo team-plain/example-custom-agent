@@ -13,9 +13,8 @@ type MutationError = { message: string; code: string } | null;
 /**
  * Every write this example makes back to Plain.
  *
- * Deliberately not in `agent/connections/`: eve reserves that directory for MCP and OpenAPI
- * servers whose tools it discovers and offers to the model. These calls are channel plumbing the
- * model never sees, so they live in a plain module the channel imports.
+ * Not in `agent/connections/`: eve reserves that for MCP and OpenAPI servers whose tools reach the
+ * model. These are channel plumbing the model never sees.
  */
 export class Plain {
   private readonly sdk: PlainSDK;

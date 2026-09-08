@@ -38,3 +38,5 @@ jobs:
       - run: npm run typecheck --no-workspaces
       # Not redundant with typecheck: it passed a channel that could not be imported at all.
       - run: npm test --no-workspaces
+      # The only check that catches an illegal channel or tool filename: discovery runs at build.
+      - run: npm run build --no-workspaces

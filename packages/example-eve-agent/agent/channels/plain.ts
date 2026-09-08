@@ -3,32 +3,34 @@ import { parseInputResponses } from "eve/client";
 import { verifyPlainWebhook } from "@team-plain/webhooks";
 import { Plain } from "#lib/plain.ts";
 import {
+  PendingApprovals,
   SeenDeliveries,
+  approvalKey,
   optionIDFor,
   promptFrom,
   shouldAnswer,
-  type PlainApprovalPayload,
-  type PlainMessagePayload,
+  type ApprovalResolved,
+  type MessageCreated,
 } from "#lib/decide.ts";
 
-// Same path package example-coding-agent serves, so one webhook target works for either.
+// Same path example-coding-agent serves, so one webhook target works for either.
 const WEBHOOK_PATH = "/plain/webhook";
 
 const MESSAGE_CREATED = "discussion.message_created";
 const APPROVAL_RESOLVED = "discussion.tool_call_approval_resolved";
 
-// Deliveries already handled, so a Plain retry does not answer twice. Module-level because a
-// first delivery has no session yet, so per-session channel state cannot hold it.
+// Deliveries already handled, so a Plain retry does not answer twice. Module-level because a first
+// delivery has no session yet, so per-session channel state cannot hold it.
 const seen = new SeenDeliveries();
 
 /**
- * Plain toolCallId to eve requestId, for calls parked on an approval.
+ * Approval key to eve requestId, for calls parked on a person.
  *
- * Module-level for the same reason as `seen`: the approval webhook arrives on its own request,
- * outside any session, so a per-session channel state cannot answer it. Shared storage in a real
- * deployment, or a second instance drops the decision and the turn stays parked.
+ * Module-level for the same reason as `seen`: the approval webhook arrives outside any session.
  */
 const gated = new Map<string, string>();
+
+const awaitingApproval = new PendingApprovals();
 
 let client: Plain | undefined;
 let machineUserID: Promise<string> | undefined;
@@ -42,55 +44,46 @@ function plain(): Plain {
   return client;
 }
 
-// Resolved once and reused: the id never changes for a given key, and the check runs per delivery.
+// Cleared on rejection: caching the promise would let one failed identity query poison every
+// later delivery until the process restarts.
 function me(): Promise<string> {
-  machineUserID ??= plain().myMachineUserID();
+  machineUserID ??= plain()
+    .myMachineUserID()
+    .catch((err: unknown) => {
+      machineUserID = undefined;
+      throw err;
+    });
   return machineUserID;
 }
+
+type ChannelFrom = (address: string) => {
+  send: (message: string, options: { auth: null }) => Promise<unknown>;
+  respond: (responses: never, options: { auth: null }) => Promise<unknown>;
+};
 
 export default defineChannel({
   routes: [
     POST(WEBHOOK_PATH, async (request, { from, waitUntil }) => {
-      // verifyPlainWebhook needs the raw body, not parsed JSON: parsing and re-serialising changes
-      // the bytes the signature was computed over.
+      // verifyPlainWebhook needs the raw body: re-serialising changes the bytes it signed over.
       const raw = await request.text();
-      const signature = request.headers.get("plain-request-signature") ?? "";
-      const secret = (process.env.PLAIN_WEBHOOK_SECRET ?? "").trim();
-
-      const verified = verifyPlainWebhook(raw, signature, secret);
+      const verified = verifyPlainWebhook(
+        raw,
+        request.headers.get("plain-request-signature") ?? "",
+        (process.env.PLAIN_WEBHOOK_SECRET ?? "").trim(),
+      );
       if (verified.error) return new Response(verified.error.message, { status: 400 });
 
-      const payload = verified.data.payload as unknown as { eventType: string };
+      const payload = verified.data.payload;
 
       if (payload.eventType === APPROVAL_RESOLVED) {
-        // Plain owns the decision, eve owns the parked turn, and requestId is the only thing that
-        // joins them, which is why input.requested recorded the mapping.
-        const resolved = payload as unknown as PlainApprovalPayload;
-        const requestID = gated.get(resolved.toolCall.toolCallId);
-        if (requestID === undefined) return new Response(null, { status: 200 });
-
-        gated.delete(resolved.toolCall.toolCallId);
-        const optionID = optionIDFor(resolved.approval.status);
-        await from(resolved.discussion.id).respond(
-          parseInputResponses([{ requestId: requestID, optionId: optionID }]),
-          { auth: null },
-        );
+        await resumeApproval(payload, from as unknown as ChannelFrom);
         return new Response(null, { status: 200 });
       }
 
-      if (payload.eventType !== MESSAGE_CREATED) return new Response(null, { status: 200 });
+      if (payload.eventType === MESSAGE_CREATED) {
+        await startTurn(payload, from as unknown as ChannelFrom, waitUntil);
+      }
 
-      const message = payload as unknown as PlainMessagePayload;
-      if (!shouldAnswer(message, await me())) return new Response(null, { status: 200 });
-      if (seen.check(message.message.id)) return new Response(null, { status: 200 });
-
-      const text = promptFrom(message);
-      if (text === "") return new Response(null, { status: 200 });
-
-      // 200 first, work after: Plain retries a slow delivery, and a turn outlives the request.
-      // from(discussion.id) creates the session on the first message and resumes it on later ones,
-      // which is the whole discussion-to-session mapping.
-      waitUntil(from(message.discussion.id).send(text, { auth: null }));
       return new Response(null, { status: 200 });
     }),
   ],
@@ -100,8 +93,8 @@ export default defineChannel({
       await plain().setAgentStatus(discussionOf(channel), "IN_PROGRESS");
     },
 
-    // One line on the Plain timeline per call the model makes, before it runs. Correlated by
-    // callId because eve warns that calls arrive incrementally, not one event per step.
+    // One line on the Plain timeline per call, before it runs. Correlated by callId because eve
+    // warns that calls arrive incrementally rather than one event per step.
     async "actions.requested"(event, channel) {
       const discussionID = discussionOf(channel);
       for (const action of event.actions) {
@@ -110,12 +103,8 @@ export default defineChannel({
       }
     },
 
-    /**
-     * The gate. eve has parked the turn; Plain shows the card and owns the decision.
-     *
-     * Only `tool-approval` becomes a Plain approval. A `question` or `session-limit` request is the
-     * agent asking for input, which this surface has no card for.
-     */
+    // The gate. eve parked the turn; Plain shows the card and owns the decision. Only
+    // `tool-approval` becomes a card: a `question` or `session-limit` has no equivalent here.
     async "input.requested"(event, channel) {
       const discussionID = discussionOf(channel);
 
@@ -123,7 +112,8 @@ export default defineChannel({
         if (request.kind !== "tool-approval") continue;
 
         const toolCallID = request.action.callId;
-        gated.set(toolCallID, request.requestId);
+        gated.set(approvalKey(discussionID, toolCallID), request.requestId);
+        awaitingApproval.opened(discussionID);
 
         await plain().upsertToolCall(discussionID, toolCallID, "PENDING", describe(request.action));
         await plain().requestApproval(discussionID, toolCallID, request.prompt);
@@ -131,17 +121,16 @@ export default defineChannel({
     },
 
     async "action.result"(event, channel) {
-      const discussionID = discussionOf(channel);
       const callID = callIDOf(event.result);
       if (callID === undefined) return;
 
-      // "rejected" means a denied approval. Plain already failed that call with the reviewer note
-      // as its error, so writing an ERROR would be a second worse explanation and Plain NOOPs it.
+      // "rejected" is a denied approval. Plain already failed that call with the reviewer note, so
+      // an ERROR here would replace a person's reason with a worse one.
       if (event.status === "rejected") return;
 
       const failed = event.status === "failed";
       await plain().upsertToolCall(
-        discussionID,
+        discussionOf(channel),
         callID,
         failed ? "ERROR" : "SUCCESS",
         describeResult(event.result),
@@ -149,16 +138,21 @@ export default defineChannel({
       );
     },
 
+    // Only terminal output reaches Plain. A message finishing on "tool-calls" is interim narration
+    // before the tool runs, and posting it would read as the answer.
     async "message.completed"(event, channel) {
+      if (finishReasonOf(event) === "tool-calls") return;
       const markdown = textOf(event.message);
       if (markdown === "") return;
       await plain().sendMessage(discussionOf(channel), markdown);
     },
 
-    // Settles last, and only after the reply is posted: the reply is what marks the discussion
-    // unread, so settling first would claim the agent had finished before the answer existed.
+    // eve emits this after `input.requested` while the card is still up, and Plain refuses IDLE
+    // during a pending approval, so settling here would fail the whole turn.
     async "session.waiting"(_event, channel) {
-      await plain().setAgentStatus(discussionOf(channel), "IDLE");
+      const discussionID = discussionOf(channel);
+      if (!awaitingApproval.canSettleStatus(discussionID)) return;
+      await plain().setAgentStatus(discussionID, "IDLE");
     },
 
     async "turn.failed"(event, channel) {
@@ -172,6 +166,59 @@ export default defineChannel({
   },
 });
 
+/**
+ * Answers the parked turn with the human's decision.
+ *
+ * Plain owns the decision, eve owns the pause, and `requestId` joins them.
+ */
+async function resumeApproval(payload: ApprovalResolved, from: ChannelFrom): Promise<void> {
+  const discussionID = payload.discussion.id;
+  const key = approvalKey(discussionID, payload.toolCallId);
+  const requestID = gated.get(key);
+  if (requestID === undefined) return;
+
+  // Undefined means Plain reported something that is not a decision, so the request stays parked
+  // rather than being cancelled on a status this code does not understand.
+  const optionID = optionIDFor(payload.status);
+  if (optionID === undefined) {
+    await plain().upsertToolCall(
+      discussionID,
+      payload.toolCallId,
+      "ERROR",
+      `unresolved approval for ${payload.toolCallId}`,
+      `Plain reported approval status ${payload.status}, which this agent does not handle`,
+    );
+    return;
+  }
+
+  await from(discussionID).respond(
+    parseInputResponses([{ requestId: requestID, optionId: optionID }]) as never,
+    { auth: null },
+  );
+
+  // Only after respond succeeds. Deleting first loses the one mapping that can resume this turn,
+  // and Plain's retry would then answer 200 while the turn stayed parked.
+  gated.delete(key);
+  awaitingApproval.settled(discussionID);
+}
+
+/** Starts or resumes the eve session for this discussion. */
+async function startTurn(
+  payload: MessageCreated,
+  from: ChannelFrom,
+  waitUntil: (work: Promise<unknown>) => void,
+): Promise<void> {
+  if (!shouldAnswer(payload, await me())) return;
+  if (seen.check(payload.message.id)) return;
+
+  const text = promptFrom(payload);
+  if (text === "") return;
+
+  // from(discussion.id) creates the session on the first message and resumes it on later ones,
+  // which is the whole discussion-to-session mapping.
+  waitUntil(from(payload.discussion.id).send(text, { auth: null }));
+}
+
 // The address a channel operation was bound to is the Plain discussion id, because that is the
 // continuation token this channel mints.
 function discussionOf(channel: { continuation?: { token: string } }): string {
@@ -181,8 +228,7 @@ function discussionOf(channel: { continuation?: { token: string } }): string {
 }
 
 function describe(action: { toolName: string; input: unknown }): string {
-  const input = JSON.stringify(action.input);
-  return truncate(`${action.toolName}(${input})`, 2000);
+  return truncate(`${action.toolName}(${JSON.stringify(action.input)})`, 2000);
 }
 
 function describeResult(result: unknown): string {
@@ -200,6 +246,16 @@ function textOf(message: unknown): string {
     if (typeof text === "string") return text.trim();
   }
   return "";
+}
+
+function finishReasonOf(event: unknown): string | undefined {
+  if (event === null || typeof event !== "object") return undefined;
+  if ("finishReason" in event) {
+    const reason = (event as { finishReason?: unknown }).finishReason;
+    if (typeof reason === "string") return reason;
+  }
+  if ("message" in event) return finishReasonOf((event as { message?: unknown }).message);
+  return undefined;
 }
 
 function messageOf(event: unknown): string {
@@ -229,6 +285,7 @@ function callIDOf(result: unknown): string | undefined {
 
 /** The failure is posted before the status settles, so the user reads what went wrong. */
 async function reportFailure(discussionID: string, message: string): Promise<void> {
+  awaitingApproval.settled(discussionID);
   await plain().sendMessage(discussionID, `The agent could not finish this turn.\n\n> ${message}`);
   await plain().setAgentStatus(discussionID, "IDLE");
 }

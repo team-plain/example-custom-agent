@@ -15,6 +15,7 @@
   },
   "include": [
     "agent/**/*.ts",
-    "evals/**/*.ts"
+    "evals/**/*.ts",
+    "tests/**/*.ts"
   ]
 }
