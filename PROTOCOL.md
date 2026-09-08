@@ -458,6 +458,12 @@ older than that is silently never sent the event, with nothing anywhere reportin
 **Return 200 immediately, then work.** Plain retries anything that is not a 2xx, and a real answer
 takes far longer than the delivery timeout. Answer the HTTP request first, do the work after.
 
+**Where you run the model is not part of this protocol.** Plain sends a webhook and waits for a
+mutation, so it cannot tell whether the answer came from a process on your laptop, a sandbox, or an
+API call. This example runs a CLI, on this machine or in a Vercel Sandbox depending on
+`AGENT_RUNTIME`, and Plain sees no difference. Pick whatever isolation the prompt deserves: on an
+agent session the prompt is whatever a person typed.
+
 **Deduplicate on `message.id`.** A retried delivery must not produce a second answer.
 
 **Keep one model session per discussion, not per message.** Store the discussion id against whatever

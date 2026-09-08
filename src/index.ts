@@ -1,8 +1,11 @@
 import { loadConfig, loadDotEnv } from "./config.ts";
 import { runCheck } from "./check.ts";
+import { LocalExecutor, type Executor } from "./executor.ts";
 import { runHelp } from "./help.ts";
 import { PlainClient } from "./plain.ts";
 import { PROVIDER_NAMES, type ProviderName } from "./providers.ts";
+import { readRuntime, type RuntimeName } from "./runtime.ts";
+import { loadSandboxConfig, SandboxExecutor } from "./sandbox.ts";
 import { runServe } from "./serve.ts";
 import { fail } from "./ui.ts";
 
@@ -21,6 +24,11 @@ function readProvider(): ProviderName {
   return value as ProviderName;
 }
 
+function createExecutor(runtime: RuntimeName): Executor {
+  if (runtime === "vercel-sandbox") return new SandboxExecutor(loadSandboxConfig());
+  return new LocalExecutor();
+}
+
 try {
   await loadDotEnv();
 
@@ -33,10 +41,12 @@ try {
   const config = loadConfig();
   const client = new PlainClient(config.apiKey);
 
+  const runtime = readRuntime();
+
   if (command === "check") {
-    await runCheck(client);
+    await runCheck(client, runtime);
   } else if (command === "serve") {
-    await runServe(client, config, readProvider());
+    await runServe(client, config, readProvider(), runtime, createExecutor(runtime));
   } else {
     throw new Error(`unknown command "${command}": run \`bun run help\``);
   }

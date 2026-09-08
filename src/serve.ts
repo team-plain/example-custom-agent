@@ -1,6 +1,8 @@
 import { askForApproval, describeReply, oneLine, reportAbandoned, reportOutcome } from "./approvals.ts";
 import { PORT, WEBHOOK_PATH, type Config } from "./config.ts";
+import type { Executor } from "./executor.ts";
 import type { ProviderName } from "./providers.ts";
+import type { RuntimeName } from "./runtime.ts";
 import { bold, cyan, dim, fail, green, label, red, warn } from "./ui.ts";
 import { Runner } from "./runner.ts";
 import type { MachineUser, PlainClient } from "./plain.ts";
@@ -84,10 +86,13 @@ class Agent {
     // Not fatal: the answer still matters even if the spinner never appears.
     await this.setStatus(discussionID, "IN_PROGRESS");
 
-    const prompt = await this.buildPrompt(payload);
-
+    let prompt: string;
     let answer: string;
     try {
+      // Both inside the try. Building the prompt asks the runtime whether a session is resumable,
+      // and in a sandbox that creates the VM and installs the CLI, so it can fail. A throw out
+      // here left the discussion on IN_PROGRESS with no reply and the message already seen.
+      prompt = await this.buildPrompt(payload);
       answer = await this.runner.ask(discussionID, prompt);
     } catch (err) {
       console.log(`${dim(discussionID)} ${red("claude failed")} ${message(err)}`);
@@ -274,6 +279,8 @@ export async function runServe(
   client: PlainClient,
   config: Config,
   provider: ProviderName,
+  runtime: RuntimeName,
+  executor: Executor,
 ): Promise<void> {
   const me = await client.myMachineUser();
   console.log(`${label("machine user")}${bold(me.id)} ${me.fullName}`);
@@ -281,7 +288,23 @@ export async function runServe(
     console.log(fail("this machine user is not a custom agent, so it stays out of the picker"));
   }
 
-  const runner = await Runner.create(provider);
+  const runner = await Runner.create(provider, executor);
+
+  // A sandbox keeps running after this process exits, and it bills for the time. Stopping is not
+  // deleting: the next turn resumes the same one with its session files intact.
+  let closing = false;
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      // Double Ctrl-C is how a dev server normally gets stopped. Without the guard the second
+      // one exits 0 while the first one's stop requests are still in flight, leaking the VMs.
+      if (closing) {
+        console.log(fail("still stopping sandboxes, leaving them running"));
+        process.exit(1);
+      }
+      closing = true;
+      void runner.close().finally(() => process.exit(0));
+    });
+  }
   const agent = new Agent(client, runner, me, config.secret, config.resolveWhenDone, config.gated);
 
   Bun.serve({
@@ -295,16 +318,22 @@ export async function runServe(
   });
 
   console.log(`${label("provider")}${bold(provider)}`);
+  console.log(`${label("runtime")}${bold(runtime)}`);
   console.log(`${label("listening on")}:${PORT}${WEBHOOK_PATH}`);
   if (config.publicURL !== "") {
     console.log(`${label("webhook url")}${cyan(config.publicURL + WEBHOOK_PATH)}`);
   }
-  console.log(
-    warn(
-      provider === "claude"
-        ? "claude runs unsandboxed in auto mode with the whole filesystem in reach"
-        : `${provider} runs with whatever permissions its own config grants it`,
-    ),
+  console.log(runtimeNote(provider, runtime));
+}
+
+function runtimeNote(provider: ProviderName, runtime: RuntimeName): string {
+  if (runtime === "vercel-sandbox") {
+    return dim(`${provider} runs in a Vercel Sandbox, one per discussion, not on this machine`);
+  }
+  return warn(
+    provider === "claude"
+      ? "claude runs unsandboxed in auto mode with the whole filesystem in reach"
+      : `${provider} runs with whatever permissions its own config grants it`,
   );
 }
 

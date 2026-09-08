@@ -1,5 +1,6 @@
 import type { PlainClient } from "./plain.ts";
-import { bold, cyan, fail, heading, label, note, ok, opt, red, warn } from "./ui.ts";
+import type { RuntimeName } from "./runtime.ts";
+import { bold, cyan, dim, fail, heading, label, note, ok, opt, red, warn } from "./ui.ts";
 
 // The minimum from the README: create posts the answer, read pulls the thread it is about.
 const REQUIRED = ["threadDiscussionMessage:create", "threadDiscussion:read"];
@@ -17,8 +18,15 @@ const OPTIONAL: Record<string, string> = {
 
 const MACHINE_USERS_URL = "https://app.plain.com/~/settings/machine-users/";
 
+// Required to reach Vercel at all, so a missing one is a hard failure rather than a warning.
+const SANDBOX_REQUIRED = ["VERCEL_BEARER_TOKEN", "VERCEL_SANDBOX_TEAM_ID", "VERCEL_SANDBOX_PROJECT_ID"];
+
+const SANDBOX_OPTIONAL: Record<string, string> = {
+  VERCEL_SANDBOX_SNAPSHOT_ID: "each new sandbox installs the CLI at first start, which is slower",
+};
+
 /** Prints who the API key is, whether it can answer, and where the workspace's webhooks point. */
-export async function runCheck(client: PlainClient): Promise<void> {
+export async function runCheck(client: PlainClient, runtime: RuntimeName): Promise<void> {
   const me = await client.myMachineUser();
   console.log(`${label("machine user")}${bold(me.id)} ${me.fullName}`);
   console.log(`${label("custom agent")}${me.isCustomAgent ? "yes" : red("no")}`);
@@ -44,6 +52,8 @@ export async function runCheck(client: PlainClient): Promise<void> {
     console.log(note(`confirm in the dashboard that it grants ${REQUIRED.join(" and ")}`));
   }
 
+  reportRuntime(runtime);
+
   console.log(`\n${heading("webhook targets")}`);
   try {
     const targets = await client.webhookTargets();
@@ -55,6 +65,31 @@ export async function runCheck(client: PlainClient): Promise<void> {
     }
   } catch {
     console.log(opt(`webhookTarget:read is missing, so ${OPTIONAL["webhookTarget:read"]}`));
+  }
+}
+
+function reportRuntime(runtime: RuntimeName): void {
+  console.log(`\n${heading("runtime")}`);
+  console.log(`  ${label("AGENT_RUNTIME")}${bold(runtime)}`);
+  if (runtime === "local") {
+    console.log(warn("the CLI runs on this machine, with this machine's filesystem in reach"));
+    return;
+  }
+
+  console.log(dim("  the CLI runs in a Vercel Sandbox, one per discussion"));
+  for (const name of SANDBOX_REQUIRED) {
+    const set = (process.env[name] ?? "").trim() !== "";
+    console.log(set ? ok(name) : fail(`${name} is missing, so no sandbox can be created`));
+  }
+  for (const [name, consequence] of Object.entries(SANDBOX_OPTIONAL)) {
+    if ((process.env[name] ?? "").trim() === "") console.log(opt(`${name} is unset, so ${consequence}`));
+  }
+
+  const authenticated = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].some(
+    (name) => (process.env[name] ?? "").trim() !== "",
+  );
+  if (!authenticated) {
+    console.log(fail("no ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN, and a sandbox has no login"));
   }
 }
 
