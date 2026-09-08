@@ -1,7 +1,15 @@
 import { defineChannel, POST } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import { verifyPlainWebhook } from "@team-plain/webhooks";
-import { Plain } from "#lib/plain.js";
+import { Plain } from "#lib/plain.ts";
+import {
+  SeenDeliveries,
+  optionIDFor,
+  promptFrom,
+  shouldAnswer,
+  type PlainApprovalPayload,
+  type PlainMessagePayload,
+} from "#lib/decide.ts";
 
 // Same path package example-coding-agent serves, so one webhook target works for either.
 const WEBHOOK_PATH = "/plain/webhook";
@@ -9,19 +17,9 @@ const WEBHOOK_PATH = "/plain/webhook";
 const MESSAGE_CREATED = "discussion.message_created";
 const APPROVAL_RESOLVED = "discussion.tool_call_approval_resolved";
 
-// Confirmed against eve's own types: `approval.settled.outcome` is "approved" | "cancelled".
-const APPROVE_OPTION = "approve";
-const CANCEL_OPTION = "cancel";
-
-/**
- * Deliveries already handled, so a Plain retry does not answer twice.
- *
- * Module-level and bounded because a first delivery has no session yet, so per-session channel
- * state cannot hold it. A real deployment needs shared storage instead: two instances do not see
- * each other's set, and a restart forgets everything.
- */
-const seen = new Set<string>();
-const SEEN_LIMIT = 1000;
+// Deliveries already handled, so a Plain retry does not answer twice. Module-level because a
+// first delivery has no session yet, so per-session channel state cannot hold it.
+const seen = new SeenDeliveries();
 
 /**
  * Plain toolCallId to eve requestId, for calls parked on an approval.
@@ -31,13 +29,6 @@ const SEEN_LIMIT = 1000;
  * deployment, or a second instance drops the decision and the turn stays parked.
  */
 const gated = new Map<string, string>();
-
-function alreadyHandled(messageID: string): boolean {
-  if (seen.has(messageID)) return true;
-  if (seen.size >= SEEN_LIMIT) seen.clear();
-  seen.add(messageID);
-  return false;
-}
 
 let client: Plain | undefined;
 let machineUserID: Promise<string> | undefined;
@@ -56,31 +47,6 @@ function me(): Promise<string> {
   machineUserID ??= plain().myMachineUserID();
   return machineUserID;
 }
-
-/** The four conditions from the docs. Skip any one and the agent answers its own replies. */
-function shouldAnswer(payload: PlainMessagePayload, myID: string): boolean {
-  return (
-    payload.discussion.type === "AGENT_SESSION" &&
-    payload.discussion.agent?.id === myID &&
-    payload.message.type === "OUTBOUND" &&
-    payload.discussion.status !== "RESOLVED"
-  );
-}
-
-// Narrow structural types for the two payloads used here. The webhooks package ships full types;
-// these name only the fields this channel reads.
-type PlainMessagePayload = {
-  eventType: string;
-  discussion: { id: string; type: string; status: string; agent?: { id: string } | null };
-  message: { id: string; type: string; text?: string | null; markdown?: string | null };
-};
-
-type PlainApprovalPayload = {
-  eventType: string;
-  discussion: { id: string };
-  toolCall: { toolCallId: string };
-  approval: { status: string; reviewerNote?: string | null };
-};
 
 export default defineChannel({
   routes: [
@@ -104,7 +70,7 @@ export default defineChannel({
         if (requestID === undefined) return new Response(null, { status: 200 });
 
         gated.delete(resolved.toolCall.toolCallId);
-        const optionID = resolved.approval.status === "APPROVED" ? APPROVE_OPTION : CANCEL_OPTION;
+        const optionID = optionIDFor(resolved.approval.status);
         await from(resolved.discussion.id).respond(
           parseInputResponses([{ requestId: requestID, optionId: optionID }]),
           { auth: null },
@@ -116,9 +82,9 @@ export default defineChannel({
 
       const message = payload as unknown as PlainMessagePayload;
       if (!shouldAnswer(message, await me())) return new Response(null, { status: 200 });
-      if (alreadyHandled(message.message.id)) return new Response(null, { status: 200 });
+      if (seen.check(message.message.id)) return new Response(null, { status: 200 });
 
-      const text = (message.message.markdown ?? message.message.text ?? "").trim();
+      const text = promptFrom(message);
       if (text === "") return new Response(null, { status: 200 });
 
       // 200 first, work after: Plain retries a slow delivery, and a turn outlives the request.

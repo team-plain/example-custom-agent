@@ -16,7 +16,8 @@
     "dev": "eve dev",
     "eval": "eve eval",
     "start": "eve start",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "node --test"
   },
   "dependencies": {
     "@team-plain/graphql": "^3.0.0",
