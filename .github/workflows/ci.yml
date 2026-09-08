@@ -1,7 +1,8 @@
 name: CI
 on:
+  # No branch filter on pull_request on purpose: a stacked PR targets its base, not main, and
+  # filtering on main would leave exactly those PRs with no checks at all.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
