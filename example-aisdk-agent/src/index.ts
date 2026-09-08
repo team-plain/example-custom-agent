@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import { assertModelCredential, modelName } from "./core.ts";
-import { INTERNAL_EVENTS, SUPPORT_EVENTS, loadConfig, loadDotEnv } from "./config.ts";
+import { AGENT_EVENTS, loadConfig, loadDotEnv } from "./config.ts";
 import { Plain } from "./plain.ts";
-import { runServe, type Prompts } from "./serve.ts";
+import { runServe } from "./serve.ts";
 
-const PROMPTS_DIR = join(import.meta.dir, "..", "prompts");
+const PROMPT_PATH = join(import.meta.dir, "..", "prompts", "agent.md");
 
 const VARIABLES: [string, string][] = [
   ["PLAIN_API_KEY", "required"],
@@ -12,10 +12,6 @@ const VARIABLES: [string, string][] = [
   ["OPENAI_API_KEY", "required, this package calls the model directly"],
   ["PLAIN_API_URL", "optional, defaults to production"],
   ["AGENT_MODEL", "optional, defaults to gpt-4o-mini"],
-  ["PLAIN_SURFACE_SUPPORT", "optional, 0 to switch the customer-thread surface off"],
-  ["PLAIN_SURFACE_INTERNAL", "optional, 0 to switch the Sidekick surface off"],
-  ["PLAIN_GATE_SUPPORT", "optional, 0 to send replies instead of drafting them"],
-  ["PLAIN_GATE_INTERNAL", "optional, 0 to skip the approval card"],
 ];
 
 const command = Bun.argv[2] ?? "serve";
@@ -36,7 +32,7 @@ try {
     await check(plain, config.apiURL);
   } else if (command === "serve") {
     assertModelCredential();
-    await runServe(plain, config, await prompts());
+    await runServe(plain, config, await readPrompt());
   } else {
     throw new Error(`unknown command "${command}": run \`bun run help\``);
   }
@@ -45,21 +41,13 @@ try {
   process.exit(1);
 }
 
-async function prompts(): Promise<Prompts> {
-  const [support, internal] = await Promise.all([
-    read(join(PROMPTS_DIR, "support.md")),
-    read(join(PROMPTS_DIR, "internal.md")),
-  ]);
-  return { support, internal };
-}
-
-async function read(path: string): Promise<string> {
-  const file = Bun.file(path);
-  if (!(await file.exists())) throw new Error(`${path} is missing`);
+async function readPrompt(): Promise<string> {
+  const file = Bun.file(PROMPT_PATH);
+  if (!(await file.exists())) throw new Error(`${PROMPT_PATH} is missing`);
   return (await file.text()).trim();
 }
 
-/** Prints who the key is and which events each surface needs, before anything is served. */
+/** Everything that has to be right before serving: identity, events, model, knowledge. */
 async function check(plain: Plain, apiURL: string): Promise<void> {
   console.log(`endpoint     ${apiURL}`);
   console.log(`model        ${modelName()}`);
@@ -67,26 +55,38 @@ async function check(plain: Plain, apiURL: string): Promise<void> {
   const myID = await plain.myMachineUserID();
   console.log(`machine user ${myID}`);
 
-  console.log("\nsupport surface, subscribe a webhook target to:");
-  for (const event of SUPPORT_EVENTS) console.log(`  ${event}`);
-  console.log("\ninternal surface, subscribe a webhook target to:");
-  for (const event of INTERNAL_EVENTS) console.log(`  ${event}`);
+  console.log("\nsubscribe a webhook target to:");
+  for (const event of AGENT_EVENTS) console.log(`  ${event}`);
+  console.log("\non webhook version 2026-09-06, matching @team-plain/webhooks 1.9.0");
 
-  console.log("\nboth need webhook version 2026-09-06, matching @team-plain/webhooks 1.9.0");
+  // An agent with nothing indexed searches successfully and finds nothing, which reads as a broken
+  // agent rather than an empty help center. Worth knowing before the first turn.
+  try {
+    const hits = await plain.searchKnowledge("how do I get started", 3);
+    console.log(`\nknowledge   ${hits.length} result(s) for a sample query`);
+    if (hits.length === 0) {
+      console.log("            nothing is indexed yet, so the agent has nothing to answer from");
+    }
+    for (const hit of hits) console.log(`            ${hit.source}`);
+  } catch (err) {
+    console.log(`\nknowledge   FAILED: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   try {
     assertModelCredential();
-    console.log("model credential set");
+    console.log("\nmodel credential set");
   } catch (err) {
-    console.log(`model credential MISSING: ${err instanceof Error ? err.message : String(err)}`);
+    console.log(`\nmodel credential MISSING: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
 function help(): void {
-  console.log("example-aisdk-agent  both Plain agent surfaces on the Vercel AI SDK\n");
+  console.log("example-aisdk-agent  a Plain agent on the Vercel AI SDK\n");
+  console.log("It answers in a Sidekick discussion opened on a customer thread: reads the thread,");
+  console.log("searches the workspace knowledge, and proposes a reply for a person to approve.\n");
   console.log("commands");
-  console.log("  serve    answer webhooks for whichever surfaces are switched on (default)");
-  console.log("  check    who the key is, which events to subscribe, whether the model is reachable");
+  console.log("  serve    answer discussion webhooks (default)");
+  console.log("  check    identity, events, model, and whether anything is indexed to search");
   console.log("  help     this\n");
   console.log(".env");
   for (const [name, note] of VARIABLES) console.log(`  ${name.padEnd(26)}${note}`);

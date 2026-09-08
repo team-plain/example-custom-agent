@@ -4,66 +4,100 @@ Reference implementations of one protocol: **Plain sends a webhook, your agent t
 agent writes back.** Plain runs the infrastructure around the agent. The AI part, the model, the
 prompt and the tools, is yours.
 
-Each package below builds that agent side a different way. They are examples to read and take
-from, not a framework to depend on.
+Both packages build the same agent two different ways. They are examples to read and take from,
+not a framework to depend on.
 
 The protocol itself lives in Plain's docs rather than in this repo.
 [Build a support agent](https://www.plain.com/docs/agents/support-agent) and
-[Build an internal agent](https://www.plain.com/docs/agents/internal-agent) give every event and every API
-call, so you can build this in a language none of these packages use.
+[Build an internal agent](https://www.plain.com/docs/agents/internal-agent) give every event and
+every API call, so you can build this in a language neither package uses.
+
+## What the agent does
+
+A teammate opens Ask Sidekick on a customer's thread and asks the agent to handle it. From there:
+
+```
+read_customer_thread    what did the customer actually ask
+search_knowledge        the workspace help center, as many searches as it needs
+reply_to_customer       a person approves, then it reaches the customer
+```
+
+Every call lands on the discussion timeline as it happens, so the team watches the work instead of
+a spinner. The answer is grounded in the help center rather than in the model's memory, and the one
+call a customer ever sees is the one call a person decides.
 
 ## The packages
 
 | Package | Agent built with | Reach for it when |
 | --- | --- | --- |
-| [`example-coding-agent`](example-coding-agent) | an agent CLI you already run (`claude`, `codex`, `pi`, `opencode`) | you want the shortest path to a working agent, and the reasoning already happens in a CLI you trust. No model API key of its own. |
-| `example-eve-agent` | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and sandboxed compute handed to you rather than hand-rolled. |
-| `example-aisdk-agent` | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop, and to see both of Plain's agent surfaces side by side on the raw API. |
+| [`example-eve-agent`](example-eve-agent) | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and an approval gate the framework parks for you. |
+| [`example-aisdk-agent`](example-aisdk-agent) | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop and see every Plain call written out with nothing in between. |
 
-All three are in the repo. `example-coding-agent` and `example-aisdk-agent` are Bun and share the
-root install; `example-eve-agent` is npm and Node 24, for the reasons below.
+`example-aisdk-agent` is Bun and uses the root install. `example-eve-agent` is npm and Node 24, for
+the reasons below.
 
-Setup is per package: each one has its own `README.md` and its own `.env`, because what they need
+Setup is per package: each has its own `README.md` and its own `.env`, because what they need
 differs. Start there, not here.
 
-## The two surfaces
+## The same agent, two architectures
 
-Plain has two places a custom agent can run, and they use different events and different mutations:
+Worth reading side by side, because the frameworks force genuinely different answers.
 
-- A **support agent** works customer threads. It answers `thread.*` webhooks, reads the
-  conversation, and replies, labels, notes, or hands off to a person. What it sends reaches the
-  customer. See [Build a support agent](https://www.plain.com/docs/agents/support-agent).
-- An **internal agent** answers your own team inside a Sidekick conversation. It answers
-  `discussion.message_created`, reports its status, reports its tool calls, and can gate an action
-  on someone's approval. Nothing it writes reaches the customer. See
-  [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
+| | `example-eve-agent` | `example-aisdk-agent` |
+| --- | --- | --- |
+| Tools live in | one file each under `agent/tools/` | one closure in `src/agent.ts` |
+| The gate is | `approval: always()` on the tool | `requestApproval` then poll |
+| Waiting for a person | eve parks the turn durably | the turn is held open in memory |
+| Plain writes come from | the channel's event handlers | the tool bodies |
+| A tool learns the thread id from | the prompt, then checks it | the closure it was built with |
 
-`example-coding-agent` and `example-eve-agent` are internal agents. `example-aisdk-agent` does
-both, from one shared core, which makes it the one place to compare them.
+The last row is the sharpest difference. An eve tool gets no channel context, so the thread id
+travels through the prompt and comes back as model output, which means the tools check it against
+what a webhook actually delivered before reading a conversation or replying on it. The AI SDK
+package builds its tools per turn, so the id is never in the model's hands at all.
 
 ## Repo layout
 
 ```
 package.json                        Bun workspace root
-example-coding-agent/               an agent CLI does the thinking
 example-eve-agent/                  eve runs the agent (npm + Node 24, see below)
-example-aisdk-agent/                the AI SDK directly, and both surfaces
+example-aisdk-agent/                the AI SDK directly, no framework
 ```
 
-`bun install` at the root covers the Bun packages, and root `bun run test` and `bun run typecheck`
-fan out across them.
+`bun install` at the root covers `example-aisdk-agent`, and root `bun run test` and
+`bun run typecheck` run it.
 
 **`example-eve-agent` is deliberately outside the Bun workspace**, because eve requires npm and
 Node 24: its CLI refuses to run under Bun, it pins TypeScript 7 against the other package's 5, and
-it ships an npm lockfile. So the root `workspaces` list names packages explicitly rather than
+it ships an npm lockfile. So the root `workspaces` list names the package explicitly rather than
 globbing, since Bun ignores a negated pattern. Install and run that one from its own directory with
 `npm ... --no-workspaces`; its README explains why the flag is needed.
 
 ## The approval gate
 
-Every package ships with the approval gate **on**. Before the agent's answer reaches anyone, a
-person sees a card with Approve and Deny.
+`reply_to_customer` is gated in both packages, and there is no environment variable to switch it
+off. That is the point of the examples rather than a default worth tuning: everything else the
+agent does is a read, and this is the only call a customer ever sees.
 
-That is deliberate and it is not a default worth changing lightly: an example that shipped the gate
-switched off would teach you nothing about the part of building an agent that is actually hard. Each
-package documents its own switch for turning it off while you are experimenting.
+Reads are deliberately not gated. A card per search would turn the gate into noise people click
+through, which is worse than no gate at all.
+
+**Only a person can resolve a card.** `resolveDiscussionApproval` refuses a machine user with
+"Machine user not allowed to perform this operation", even for the agent's own request. While a card
+is open Plain also refuses any agent status change, so both packages skip that write rather than
+attempt it.
+
+## Answers come from the help center
+
+Both packages call `searchKnowledgeSources`, so Plain does the retrieval and neither ships a vector
+store or an embedding step. The search is scoped to help center articles with
+`options: { types: ["HELP_CENTER_ARTICLE"] }`.
+
+That scope matters more than it looks. A workspace with its own product docs indexed as documents
+will see those outrank the help center on any query that shares a word with them, and the agent
+then answers confidently about the wrong product. Drop the option to widen the search once you know
+what is indexed.
+
+An agent with nothing indexed searches successfully and finds nothing, which reads as a broken
+agent rather than an empty help center. `bun run check` in the AI SDK package reports how many
+results a sample query gets, so you find that out before the first turn rather than during it.

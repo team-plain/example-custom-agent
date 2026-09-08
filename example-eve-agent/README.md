@@ -1,14 +1,16 @@
 # example-eve-agent
 
-An internal Plain agent built on [eve](https://eve.dev/docs), Vercel's filesystem-first agent
-framework. An agent here is a directory: a system prompt, a model config, one file per tool, and one
-file per channel.
+A Plain agent built on [eve](https://eve.dev/docs), Vercel's filesystem-first agent framework. An
+agent here is a directory: a system prompt, a model config, one file per tool, one file per channel.
 
-Reach for this one when you want durable sessions and a model loop you do not have to write. For the
-other two shapes see the [repo README](../README.md), and for the protocol this implements see
+Reach for this one when you want durable sessions, an approval gate the framework parks for you,
+and a model loop you do not have to write. For the other shape see the
+[repo README](../README.md), and for the protocol see
 [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
 
 ## How it works
+
+A teammate opens Ask Sidekick on a customer's thread and asks the agent to handle it.
 
 ```
 ┌─────────────────────┐  discussion.message_created  ┌──────────────────────────────┐
@@ -19,14 +21,17 @@ other two shapes see the [repo README](../README.md), and for the protocol this 
                                                                      │
                                                           one eve session
                                                           per discussion
+                                                                     │
+                        ┌────────────────────────────┬───────────────┴────────────┐
+                 read_customer_thread         search_knowledge            reply_to_customer
+                                                                          approval: always()
 ```
 
 `from(discussion.id).send()` is the whole mapping between a Plain discussion and an eve session. eve
 creates the session on the first message and resumes it on every later one, so this package has no
-session store and no resume id to keep track of. That is most of why it is shorter than
-`example-coding-agent`.
+session store and no resume id to track.
 
-Every write back to Plain lives in the channel's `events`:
+Every write back to Plain lives in the channel's `events`, not in the tools:
 
 | eve channel event | What this package does |
 | --- | --- |
@@ -45,16 +50,16 @@ Written in TypeScript, run on Node 24 with npm. Read the next section before you
 
 ## This package is npm and Node 24, and lives outside the Bun workspace
 
-Every other package here is Bun. This one cannot be, and the reasons are worth knowing because you
+The other package here is Bun. This one cannot be, and the reasons are worth knowing because you
 will hit all three:
 
 - The eve CLI refuses to run under Bun. `bun x eve --version` answers
   `eve requires Node.js >=24. You are running v22.22.3`.
-- eve pins TypeScript 7 where the Bun packages use 5. One `node_modules` cannot hoist both.
+- eve pins TypeScript 7 where the Bun package uses 5. One `node_modules` cannot hoist both.
 - eve ships `package-lock.json`, and a Bun workspace keeps a single root `bun.lock`.
 
 So `bun install` at the repo root does not cover this directory, and the root `workspaces` list
-names packages one by one instead of globbing, because Bun ignores a negated pattern.
+names the package explicitly instead of globbing, because Bun ignores a negated pattern.
 
 **Every npm command here needs `--no-workspaces`.** Leave it off and npm walks up, finds the repo
 root's `package.json`, and installs against that instead:
@@ -79,7 +84,8 @@ files of it.
    Sidekick.
 
    Permissions: `threadDiscussion:read`, `threadDiscussion:edit`,
-   `threadDiscussionMessage:create`, `threadDiscussionMessage:edit`.
+   `threadDiscussionMessage:create`, `threadDiscussionMessage:edit`, `thread:read` and
+   `thread:reply`. The last two are what let it read the customer's conversation and answer on it.
 
 2. Copy `.env.example` to `.env` in this directory.
 
@@ -105,14 +111,18 @@ files of it.
 ## Running it
 
 Before touching webhooks, watch a turn happen on its own. This is the fastest way to know your
-gateway key and model work:
+gateway key, your model and your knowledge base all work:
 
 ```
 npm ci --no-workspaces
 npm run typecheck --no-workspaces
 npm test --no-workspaces
-npx --no-install eve invoke "In one short sentence, what is a webhook?"
+npx --no-install eve invoke "A customer asks what counts as a task on the Team plan. Search the knowledge base. There is no customer thread here, so do not read one or reply."
 ```
+
+If it answers from your help center and cites an article id, everything downstream of the model is
+working. If it says the knowledge base covers a different product, read the `.env` section below
+before anything else.
 
 Then the real thing:
 
@@ -120,47 +130,57 @@ Then the real thing:
 npm run dev --no-workspaces
 ```
 
-Open a thread in Plain, click Ask Sidekick, pick your agent, and ask it something.
+Open a thread in Plain, click Ask Sidekick, pick your agent, and ask it to answer the customer.
 
-`npm run build --no-workspaces` is worth running too, and not only in CI. eve discovers channels by
-filename, so a single stray file in `agent/channels/` fails the whole build. A test file in there
-once broke it with `Channel path segment "plain.smoke.test" is not a legal channel name` while
-typecheck and the unit tests both passed happily. Tests live in `tests/` for that reason.
+`npm run build --no-workspaces` is worth running too, and not only in CI. eve discovers tools and
+channels by filename, so a single stray file in either directory fails the whole build. A test file
+in `agent/channels/` once broke it with
+`Channel path segment "plain.smoke.test" is not a legal channel name` while typecheck and the unit
+tests both passed happily. Tests live in `tests/` for that reason.
 
-The system prompt is `agent/instructions.md`. Edit it to change what the agent is and what it will
-do.
+The system prompt is `agent/instructions.md`.
 
-## The model
+## The tools
 
-`agent/agent.ts` uses `anthropic/claude-haiku-4.5`, a string model id routed through the Vercel AI
-Gateway, which needs `AI_GATEWAY_API_KEY` or a `VERCEL_OIDC_TOKEN` that `eve link` pulls from a
-Vercel project. Haiku is the default because this example is meant to be run over and over without
-anyone thinking about cost.
+One file each under `agent/tools/`, and the filename is the name the model sees.
 
-Watch the exact id. `anthropic/claude-3-5-haiku` is not served by the gateway and returns a 404.
+**`search_knowledge`** calls `searchKnowledgeSources`, so Plain does the retrieval and this package
+ships no vector store. It is an async generator: the first `yield` reaches the channel as an
+`action.partial`, so Plain's timeline shows the search running instead of jumping from `PENDING`
+straight to a result.
 
-To skip the gateway, install a provider package such as `@ai-sdk/openai`, set that provider's key,
-and pass its model object in `agent/agent.ts` instead of the string.
+It is scoped with `options: { types: ["HELP_CENTER_ARTICLE"] }`, which matters more than it looks. A
+workspace with its own product docs indexed as documents will see those outrank the help center on
+any query sharing a word with them, and the agent then answers confidently about the wrong product.
 
-## Webhook version, the one setting that silently wastes an afternoon
+**`read_customer_thread`** concatenates `llmText` from the thread's timeline entries, which is
+Plain's own rendering for a language model.
 
-**`@team-plain/webhooks` pins exactly one webhook target version.** Not a minimum: a target set
-**newer** than the package fails just as hard as one set older.
+**`reply_to_customer`** carries `approval: always()`. It is the only call a customer ever sees, and
+the only one gated.
 
-| `@team-plain/webhooks` | required target version |
-| --- | --- |
-| 1.7.1 | `2026-08-19` |
-| 1.8.0 | `2026-08-31` |
-| 1.9.0 | `2026-09-06` (what this example uses) |
+## Where the thread id comes from, and why the tools check it
 
-A mismatch does not look like a version problem. Plain delivers, your server answers **401**, and the
-discussion sits on "thinking" forever. Only your own log says why. Change both together.
+This is the sharpest difference from the AI SDK package, and worth understanding before you copy
+either.
 
-## Approving what the agent does
+An eve tool receives its input and a context, but no channel state, so it cannot ask which
+discussion it is running for. The thread id therefore travels through the prompt: the channel reads
+`discussion.threadId` off the webhook and `promptWithThread` puts it in the message.
 
-`agent/tools/page_oncall.ts` is gated with `always()` from `eve/tools/approval`, so the model cannot
-run it without a person agreeing first. The paging itself is mocked, since this example ships no
-pager credential. The gate around it is real, and that is the part worth copying.
+Which means the id comes back as **model output**. So `read_customer_thread` and
+`reply_to_customer` both check it against `isKnownThread`, a set of the ids a webhook has actually
+delivered to this process. Without that check, a prompt injected into a customer's thread could
+name any thread id and have the agent read it or reply on it.
+
+The AI SDK package builds its tools per turn with the id in a closure, so the id is never in the
+model's hands. Neither approach is wrong. eve trades that for tools that are independent files.
+
+## Approving the reply
+
+`approval: always()`, not `once()`: every reply is its own decision, and a session that sent one has
+not earned the right to send the next unasked. There is no environment variable to switch it off,
+because everything else the agent does is a read.
 
 The two protocols line up almost exactly, which is what makes this a good place to see the flow:
 
@@ -169,7 +189,7 @@ The two protocols line up almost exactly, which is what makes this a good place 
    discussion to `TOOL_CALL_APPROVAL_PENDING`.
 3. A person approves or denies, and Plain sends `discussion.tool_call_approval_resolved`.
 4. The channel answers the parked request with `respond()`, and eve picks the turn back up where it
-   left off.
+   left off, running the tool body for the first time.
 
 `requestId` is the only thing joining the two sides, which is why the channel records the Plain
 `toolCallId` against it when the request arrives. The approval options eve offers are `approve` and
@@ -187,20 +207,55 @@ replace a person's reason with a worse one.
 unanswered card cannot be cleared by the agent under any circumstances. `session.waiting` skips the
 `IDLE` write while one is open rather than attempting it and failing.
 
-## Building your own
+## .env reads over the shell, and why that had to be added
 
-[Build an internal agent](https://www.plain.com/docs/agents/internal-agent) has the webhook
-payloads, every API call and the gotchas, so you can implement this in any language.
-[Build a support agent](https://www.plain.com/docs/agents/support-agent) is the other surface, an
-agent on customer threads rather than an internal Sidekick conversation.
+`agent/lib/client.ts` reads this package's `.env` **over the top** of the inherited environment.
 
-## What has not been verified
+That is not eve's default, and the default cost an hour. An exported `PLAIN_API_KEY` left in a shell
+won, so the agent ran as a different machine user against a different workspace and searched a help
+center full of a different product's articles. It reported, correctly and confidently, that the
+knowledge base did not cover the product it was asked about. Nothing about that looks like a
+credential problem.
 
-No live webhook has driven this package end to end. The eve runtime, the model through the gateway,
-the gated tool parking a turn, the build and 21 unit tests all pass, and the channel module has a
-test that imports it for real. What has not happened is a real `discussion.message_created` arriving
-and the event handlers writing status, reply and tool calls back to Plain.
+The file is resolved from `process.cwd()` rather than `import.meta.url`, because eve bundles this
+module into `.output` and a module-relative path then resolves inside the build and silently finds
+nothing. In a deployed build there is no `.env` at all, so the platform environment stands.
 
-That step needs a person to send an Ask Sidekick message, because a message the machine user creates
-through the API comes back as `INBOUND` and this agent answers only `OUTBOUND`. Treat the wiring as
-reviewed rather than proven.
+## Webhook version, the one setting that silently wastes an afternoon
+
+**`@team-plain/webhooks` pins exactly one webhook target version.** Not a minimum: a target set
+**newer** than the package fails just as hard as one set older.
+
+| `@team-plain/webhooks` | required target version |
+| --- | --- |
+| 1.7.1 | `2026-08-19` |
+| 1.8.0 | `2026-08-31` |
+| 1.9.0 | `2026-09-06` (what this example uses) |
+
+A mismatch does not look like a version problem. Plain delivers, your server answers **401**, and
+the discussion sits on "thinking" forever. Only your own log says why. Change both together.
+
+## The model
+
+`agent/agent.ts` uses `anthropic/claude-haiku-4.5`, a string model id routed through the Vercel AI
+Gateway, which needs `AI_GATEWAY_API_KEY` or a `VERCEL_OIDC_TOKEN` that `eve link` pulls from a
+Vercel project. Haiku is the default because this example is meant to be run over and over without
+anyone thinking about cost.
+
+Watch the exact id. `anthropic/claude-3-5-haiku` is not served by the gateway and returns a 404.
+
+To skip the gateway, install a provider package such as `@ai-sdk/openai`, set that provider's key,
+and pass its model object in `agent/agent.ts` instead of the string.
+
+## What has been verified, and what has not
+
+Against a live workspace, through `eve invoke`: the eve runtime, Haiku through the gateway, and
+`search_knowledge` returning real help center articles and grounding a precise answer in one,
+citing its article id. The build and 31 unit tests pass, and the channel module has a test that
+imports it for real.
+
+What has not run is a live webhook driving the channel end to end, so no real
+`discussion.message_created` has arrived and no approval has been seen through to approved or
+denied. That step needs a person to open Ask Sidekick: a discussion of type `AGENT_SESSION` cannot
+be created through the API at all, and a message the machine user creates comes back as `INBOUND`
+while this agent answers only `OUTBOUND`. Treat the channel wiring as reviewed rather than proven.

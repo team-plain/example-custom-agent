@@ -5,15 +5,13 @@ const PROD_API_URL = "https://core-api.uk.plain.com/graphql/v1";
 export const WEBHOOK_PATH = "/plain/webhook";
 export const PORT = 8082;
 
-/** The events each surface answers. Subscribe a target to whichever set you are running. */
-export const SUPPORT_EVENTS = [
-  "thread.thread_created",
-  "thread.email_received",
-  "thread.chat_received",
-  "thread.thread_assignment_transitioned",
-] as const;
-
-export const INTERNAL_EVENTS = [
+/**
+ * The events this agent answers. Subscribe your webhook target to both.
+ *
+ * The approval event is listed because Plain sends it, not because this package acts on it: the
+ * turn is held open in memory and polls instead. `example-eve-agent` handles it as an event.
+ */
+export const AGENT_EVENTS = [
   "discussion.message_created",
   "discussion.tool_call_approval_resolved",
 ] as const;
@@ -23,17 +21,6 @@ export type Config = {
   secret: string;
   /** Prod unless PLAIN_API_URL says otherwise. Read after .env loads, not at import time. */
   apiURL: string;
-  /**
-   * Which surfaces are live. Both by default, because the point of this package is comparing them,
-   * but a real agent usually runs one.
-   */
-  surfaces: { support: boolean; internal: boolean };
-  /**
-   * Human gates, on by default on both surfaces. On threads the gate drafts a reply instead of
-   * sending it; in discussions it is an approval card. An example that shipped them off would
-   * teach nothing about the part that is actually hard.
-   */
-  gated: { support: boolean; internal: boolean };
 };
 
 /**
@@ -74,20 +61,7 @@ export function loadConfig(): Config {
     apiKey,
     secret,
     apiURL: (process.env.PLAIN_API_URL ?? "").trim() || PROD_API_URL,
-    surfaces: {
-      support: on("PLAIN_SURFACE_SUPPORT"),
-      internal: on("PLAIN_SURFACE_INTERNAL"),
-    },
-    gated: {
-      // Opt out, not in.
-      support: on("PLAIN_GATE_SUPPORT"),
-      internal: on("PLAIN_GATE_INTERNAL"),
-    },
   };
-}
-
-function on(name: string): boolean {
-  return (process.env[name] ?? "1").trim() !== "0";
 }
 
 export function truncate(s: string, n: number): string {

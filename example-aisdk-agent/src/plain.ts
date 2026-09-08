@@ -6,7 +6,6 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // One page of timeline entries. Large enough that most threads read in a single call.
 const TIMELINE_PAGE = 50;
 
-export type ThreadAgentStatus = "IN_PROGRESS" | "HANDLED" | "HANDED_OFF";
 export type DiscussionAgentStatus = "IN_PROGRESS" | "IDLE";
 export type ToolCallStatus = "PENDING" | "SUCCESS" | "ERROR";
 
@@ -14,14 +13,16 @@ export type ApprovalOutcome =
   | { decision: "APPROVED" }
   | { decision: "DENIED"; reviewerNote: string | null };
 
+/** One hit from the workspace's indexed knowledge, already trimmed for a prompt. */
+export type KnowledgeHit = {
+  /** A help center article id, or a document URL if you widen the search. Cite it in the answer. */
+  source: string;
+  content: string;
+};
+
 type MutationError = { message: string; code: string } | null;
 
-/**
- * Both surfaces' calls on one client.
- *
- * Together on purpose: splitting it would hide how much they share (one key, one endpoint) and how
- * little they overlap (no mutation below serves both).
- */
+/** Every Plain call this agent makes, on one client. */
 export class Plain {
   private readonly sdk: PlainSDK;
 
@@ -34,7 +35,7 @@ export class Plain {
     return me.id;
   }
 
-  // ---- the support-agent surface, on a customer thread ----
+  // ---- reading ----
 
   /**
    * The whole thread as prompt-ready text.
@@ -62,21 +63,30 @@ export class Plain {
   }
 
   /**
-   * The newest customer-authored entry, which is what a suggested reply must hang off.
-   *
-   * Needed because the event that hands a thread to an agent is usually an assignment, which
-   * carries no message of its own. Entries come newest first, so the first match is the latest.
+   * Semantic search over the workspace help center. Plain does the retrieval, so this agent ships
+   * no vector store and no embedding step of its own. Drop the `types` option to widen it.
    */
-  async latestCustomerEntryID(threadID: string): Promise<string | null> {
-    const thread = await this.timeout(this.sdk.query.thread({ threadId: threadID }));
-    if (thread === null) return null;
+  async searchKnowledge(query: string, limit: number): Promise<KnowledgeHit[]> {
+    const results = await this.timeout(
+      this.sdk.query.searchKnowledgeSources({
+        searchQuery: query,
+        pageSize: limit,
+        // Help center articles only. This workspace also has plain.com/docs indexed, and those
+        // documents outranked the articles on any query sharing a word with them.
+        options: { types: ["HELP_CENTER_ARTICLE"] },
+      }),
+    );
 
-    const page = await this.timeout(thread.timelineEntries({ first: TIMELINE_PAGE }));
-    for (const entry of page.nodes) {
-      if (entry.actor?.__typename === "CustomerActor") return entry.id;
-    }
-    return null;
+    return results.map((result) => ({
+      source:
+        result.__typename === "HelpCenterArticleSearchResult"
+          ? result.helpCenterArticle.id
+          : result.indexedDocument.url,
+      content: result.content,
+    }));
   }
+
+  // ---- writing to the customer's thread ----
 
   /** Sends a reply to the customer through whichever channel the thread uses. */
   async replyToThread(threadID: string, markdown: string): Promise<void> {
@@ -89,73 +99,7 @@ export class Plain {
     this.assertOK("replyToThread", result.error ?? null);
   }
 
-  /**
-   * Drafts a reply for a person to review, edit and send. The customer sees nothing until someone
-   * sends it, which makes this the safer default while an agent is being tuned.
-   */
-  async suggestReply(threadID: string, timelineEntryID: string, markdown: string): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.addGeneratedReply({
-        input: { threadId: threadID, timelineEntryId: timelineEntryID, markdown },
-      }),
-    );
-    this.assertOK("addGeneratedReply", result.error ?? null);
-  }
-
-  /** An internal note on the thread timeline. Never delivered to the customer. */
-  async createNote(threadID: string, customerID: string, markdown: string): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.createNote({
-        input: { threadId: threadID, customerId: customerID, text: markdown, markdown },
-      }),
-    );
-    this.assertOK("createNote", result.error ?? null);
-  }
-
-  async addLabels(threadID: string, labelTypeIDs: string[]): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.addLabels({ input: { threadId: threadID, labelTypeIds: labelTypeIDs } }),
-    );
-    this.assertOK("addLabels", result.error ?? null);
-  }
-
-  async assignToUser(threadID: string, userID: string): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.assignThread({ input: { threadId: threadID, userId: userID } }),
-    );
-    this.assertOK("assignThread", result.error ?? null);
-  }
-
-  async unassignThread(threadID: string): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.unassignThread({ input: { threadId: threadID } }),
-    );
-    this.assertOK("unassignThread", result.error ?? null);
-  }
-
-  async markThreadAsTodo(threadID: string): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.markThreadAsTodo({ input: { threadId: threadID } }),
-    );
-    this.assertOK("markThreadAsTodo", result.error ?? null);
-  }
-
-  /**
-   * Reports the agent's progress on a thread.
-   *
-   * Only HANDED_OFF threads appear in the First Response, Next Response and Investigating queues,
-   * which is the point: work the agent is handling stays out of a person's view.
-   */
-  async setThreadAgentStatus(threadID: string, status: ThreadAgentStatus): Promise<void> {
-    const result = await this.timeout(
-      this.sdk.mutation.updateThreadAgentStatus({
-        input: { threadId: threadID, agentStatus: status },
-      }),
-    );
-    this.assertOK("updateThreadAgentStatus", result.error ?? null);
-  }
-
-  // ---- the internal-agent surface, on a Sidekick discussion ----
+  // ---- the discussion the agent runs in ----
 
   async sendDiscussionMessage(discussionID: string, markdown: string): Promise<void> {
     const result = await this.timeout(

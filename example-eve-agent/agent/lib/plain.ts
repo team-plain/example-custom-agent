@@ -5,16 +5,26 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 const PROD_API_URL = "https://core-api.uk.plain.com/graphql/v1";
 
+// One page of timeline entries. Large enough that most threads read in a single call.
+const TIMELINE_PAGE = 50;
+
 export type AgentStatus = "IN_PROGRESS" | "IDLE";
 export type ToolCallStatus = "PENDING" | "SUCCESS" | "ERROR";
+
+/** One hit from the workspace's indexed knowledge, already trimmed for a prompt. */
+export type KnowledgeHit = {
+  /** A help center article id, or a document URL if you widen the search. Cite it in the answer. */
+  source: string;
+  content: string;
+};
 
 type MutationError = { message: string; code: string } | null;
 
 /**
- * Every write this example makes back to Plain.
+ * Every Plain call this example makes, both the channel's writes and the tools' reads.
  *
  * Not in `agent/connections/`: eve reserves that for MCP and OpenAPI servers whose tools reach the
- * model. These are channel plumbing the model never sees.
+ * model directly. Here the model sees `agent/tools/`, and those call through this.
  */
 export class Plain {
   private readonly sdk: PlainSDK;
@@ -27,6 +37,66 @@ export class Plain {
   async myMachineUserID(): Promise<string> {
     const me = await this.timeout(this.sdk.query.myMachineUser());
     return me.id;
+  }
+
+  /**
+   * The whole customer thread as prompt-ready text.
+   *
+   * `llmText` is Plain's own rendering for a language model, so this does not reinvent it. Entry
+   * types with nothing to render return null and are skipped.
+   */
+  async threadAsText(threadID: string): Promise<string> {
+    const thread = await this.timeout(this.sdk.query.thread({ threadId: threadID }));
+    if (thread === null) throw new Error(`thread ${threadID} not found`);
+
+    const parts: string[] = [];
+    let page = await this.timeout(thread.timelineEntries({ first: TIMELINE_PAGE }));
+
+    for (;;) {
+      for (const entry of page.nodes) {
+        if (entry.llmText) parts.push(entry.llmText);
+      }
+      const next = await this.timeout(page.fetchNext());
+      if (!next) break;
+      page = next;
+    }
+
+    return parts.join("\n\n");
+  }
+
+  /**
+   * Semantic search over the workspace help center. Plain does the retrieval, so this agent ships
+   * no vector store and no embedding step of its own. Drop the `types` option to widen it.
+   */
+  async searchKnowledge(query: string, limit: number): Promise<KnowledgeHit[]> {
+    const results = await this.timeout(
+      this.sdk.query.searchKnowledgeSources({
+        searchQuery: query,
+        pageSize: limit,
+        // Help center articles only. This workspace also has plain.com/docs indexed, and those
+        // documents outranked the articles on any query sharing a word with them.
+        options: { types: ["HELP_CENTER_ARTICLE"] },
+      }),
+    );
+
+    return results.map((result) => ({
+      source:
+        result.__typename === "HelpCenterArticleSearchResult"
+          ? result.helpCenterArticle.id
+          : result.indexedDocument.url,
+      content: result.content,
+    }));
+  }
+
+  /** Sends a reply to the customer through whichever channel the thread uses. */
+  async replyToThread(threadID: string, markdown: string): Promise<void> {
+    const result = await this.timeout(
+      this.sdk.mutation.replyToThread({
+        // Both fields every time: textContent is what clients that cannot render markdown show.
+        input: { threadId: threadID, textContent: markdown, markdownContent: markdown },
+      }),
+    );
+    this.assertOK("replyToThread", result.error ?? null);
   }
 
   async sendMessage(discussionID: string, markdown: string): Promise<void> {

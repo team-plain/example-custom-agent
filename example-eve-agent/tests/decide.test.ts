@@ -6,9 +6,12 @@ import {
   approvalKey,
   optionIDFor,
   promptFrom,
+  promptWithThread,
   shouldAnswer,
+  threadIDOf,
   type MessageCreated,
 } from "../agent/lib/decide.ts";
+import { forgetThreads, isKnownThread, rememberThread } from "../agent/lib/client.ts";
 
 const ME = "mu_agent";
 
@@ -142,5 +145,47 @@ describe("PendingApprovals", () => {
     pending.opened("disc_1");
     pending.settled("disc_1");
     assert.equal(pending.canSettleStatus("disc_1"), true);
+  });
+});
+
+describe("threadIDOf", () => {
+  test("reads the customer thread off the discussion", () => {
+    assert.equal(threadIDOf(payload({ threadId: "th_1" })), "th_1");
+  });
+
+  // threadId is nullable on the payload. A discussion opened on nothing has no customer to reply
+  // to, and null rather than undefined is what the tools branch on.
+  test("is null when the discussion is not on a thread", () => {
+    assert.equal(threadIDOf(payload({ threadId: null })), null);
+  });
+});
+
+describe("promptWithThread", () => {
+  test("names the thread and tells the model which tools take it", () => {
+    const prompt = promptWithThread("answer this", "th_1");
+    assert.match(prompt, /th_1/);
+    assert.match(prompt, /read_customer_thread/);
+    assert.match(prompt, /answer this/);
+  });
+
+  // Said up front so the model does not call a tool that cannot work and then apologise for it.
+  test("says so plainly when there is no thread", () => {
+    assert.match(promptWithThread("answer this", null), /not attached to a customer thread/);
+  });
+});
+
+describe("known threads", () => {
+  test("a thread is unknown until a webhook delivers it", () => {
+    forgetThreads();
+    assert.equal(isKnownThread("th_1"), false);
+    rememberThread("th_1");
+    assert.equal(isKnownThread("th_1"), true);
+  });
+
+  // The guard that matters: the id reaches a tool through the prompt, so a model can invent one.
+  test("an invented id stays unknown", () => {
+    forgetThreads();
+    rememberThread("th_1");
+    assert.equal(isKnownThread("th_made_up"), false);
   });
 });

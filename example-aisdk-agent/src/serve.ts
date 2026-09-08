@@ -1,14 +1,7 @@
 import { verifyPlainWebhook } from "@team-plain/webhooks";
-import type {
-  DiscussionMessageCreatedPublicEventPayload,
-  ThreadAssignmentTransitionedPublicEventPayload,
-  ThreadChatReceivedPublicEventPayload,
-  ThreadCreatedPublicEventPayload,
-  ThreadEmailReceivedPublicEventPayload,
-} from "@team-plain/webhooks";
-import { INTERNAL_EVENTS, PORT, SUPPORT_EVENTS, WEBHOOK_PATH, type Config } from "./config.ts";
-import { handleDiscussion } from "./internal.ts";
-import { handleThread } from "./support.ts";
+import type { DiscussionMessageCreatedPublicEventPayload } from "@team-plain/webhooks";
+import { PORT, WEBHOOK_PATH, type Config } from "./config.ts";
+import { handleDiscussion } from "./agent.ts";
 import type { Plain } from "./plain.ts";
 
 /**
@@ -27,16 +20,15 @@ function alreadyHandled(id: string): boolean {
   return false;
 }
 
-type Surface = "support" | "internal" | "ignored";
-
-export function surfaceFor(eventType: string): Surface {
-  if ((SUPPORT_EVENTS as readonly string[]).includes(eventType)) return "support";
-  if ((INTERNAL_EVENTS as readonly string[]).includes(eventType)) return "internal";
-  return "ignored";
-}
+/**
+ * The SDK's own payload type, not a hand-written one.
+ *
+ * An invented shape typechecks and then reads undefined on the first real delivery.
+ */
+export type DiscussionPayload = DiscussionMessageCreatedPublicEventPayload;
 
 /**
- * The four conditions from the docs, for a discussion message.
+ * The four conditions from the docs.
  *
  * Skip any one and the agent answers its own replies: its own messages come back as INBOUND, so
  * the message type check alone is what stops the loop.
@@ -50,56 +42,13 @@ export function shouldAnswerDiscussion(payload: DiscussionPayload, myID: string)
   );
 }
 
-/**
- * Whether a thread event is this agent's to act on.
- *
- * Assignment is the recommended pattern: the decision lives in Plain, where a workflow or a person
- * can change it without a deploy, and reporting attributes the work to the agent.
- */
-export function shouldAnswerThread(payload: ThreadPayload, myID: string): boolean {
-  return assigneeID(payload.thread.assignee) === myID;
+/** The customer thread the discussion was opened on, or null when it was opened on nothing. */
+export function threadIDOf(payload: DiscussionPayload): string | null {
+  return payload.discussion.threadId ?? null;
 }
 
-/**
- * The SDK's own payload types, not hand-written ones.
- *
- * An invented shape typechecks and then reads undefined on the first real delivery.
- */
-export type DiscussionPayload = DiscussionMessageCreatedPublicEventPayload;
-
-export type ThreadPayload =
-  | ThreadCreatedPublicEventPayload
-  | ThreadEmailReceivedPublicEventPayload
-  | ThreadChatReceivedPublicEventPayload
-  | ThreadAssignmentTransitionedPublicEventPayload;
-
-/**
- * The customer message a suggested reply must hang off, per event type.
- *
- * It is nested on the message, not at the payload root, and thread_created and assignment events
- * carry no message at all.
- */
-export function timelineEntryIDOf(payload: ThreadPayload): string | null {
-  if (payload.eventType === "thread.email_received") return payload.email.timelineEntryId;
-  if (payload.eventType === "thread.chat_received") return payload.chat.timelineEntryId;
-  return null;
-}
-
-// ThreadAssignee is a union and its UNKNOWN variant carries no id, so this cannot just read .id.
-function assigneeID(assignee: ThreadPayload["thread"]["assignee"]): string | null {
-  if (assignee === null) return null;
-  if ("id" in assignee && typeof assignee.id === "string") return assignee.id;
-  return null;
-}
-
-export async function runServe(plain: Plain, config: Config, prompts: Prompts): Promise<void> {
+export async function runServe(plain: Plain, config: Config, systemPrompt: string): Promise<void> {
   const myID = await plain.myMachineUserID();
-
-  const active = [
-    config.surfaces.support ? "support" : null,
-    config.surfaces.internal ? "internal" : null,
-  ].filter((s) => s !== null);
-  if (active.length === 0) throw new Error("both surfaces are switched off, nothing to serve");
 
   const server = Bun.serve({
     port: PORT,
@@ -119,7 +68,7 @@ export async function runServe(plain: Plain, config: Config, prompts: Prompts): 
 
       const payload = verified.data.payload as unknown as { eventType: string };
       console.log(`<- ${payload.eventType}`);
-      dispatch(plain, config, prompts, myID, payload);
+      dispatch(plain, systemPrompt, myID, payload);
 
       // 200 before the work: Plain retries a slow delivery, and a turn outlives the request.
       return new Response(null, { status: 200 });
@@ -127,62 +76,36 @@ export async function runServe(plain: Plain, config: Config, prompts: Prompts): 
   });
 
   console.log(`listening on :${server.port}${WEBHOOK_PATH}`);
-  console.log(`surfaces: ${active.join(", ")}`);
   console.log(`machine user: ${myID}`);
 }
 
 function dispatch(
   plain: Plain,
-  config: Config,
-  prompts: Prompts,
+  systemPrompt: string,
   myID: string,
   payload: { eventType: string },
 ): void {
-  const surface = surfaceFor(payload.eventType);
-
-  if (surface === "internal" && config.surfaces.internal) {
-    const message = payload as unknown as DiscussionPayload;
-    if (payload.eventType !== "discussion.message_created") return;
-    if (!shouldAnswerDiscussion(message, myID)) return skip("not this agent's discussion turn");
-    if (alreadyHandled(message.message.id)) return skip("already handled");
-
-    const text = (message.message.markdown ?? message.message.text ?? "").trim();
-    if (text === "") return skip("empty message");
-
-    console.log(`   internal turn on ${message.discussion.id}`);
-
-    void handleDiscussion(plain, prompts.internal, text, {
-      discussionID: message.discussion.id,
-      gated: config.gated.internal,
-    })
-      .then((r) => console.log(`   internal done: answered=${r.answered} steps=${r.steps}`))
-      .catch((err) => console.error("   internal turn failed:", err));
-    return;
+  if (payload.eventType !== "discussion.message_created") {
+    return skip(`nothing to do for ${payload.eventType}`);
   }
 
-  if (surface === "support" && config.surfaces.support) {
-    const event = payload as unknown as ThreadPayload;
-    if (!shouldAnswerThread(event, myID)) return skip("thread is not assigned to this agent");
-    const entryID = timelineEntryIDOf(event);
-    if (alreadyHandled(`${payload.eventType}:${event.thread.id}:${entryID ?? ""}`)) {
-      return skip("already handled");
-    }
+  const message = payload as unknown as DiscussionPayload;
+  if (!shouldAnswerDiscussion(message, myID)) return skip("not this agent's turn");
+  if (alreadyHandled(message.message.id)) return skip("already handled");
 
-    console.log(`   support turn on ${event.thread.id}`);
+  const text = (message.message.markdown ?? message.message.text ?? "").trim();
+  if (text === "") return skip("empty message");
 
-    void handleThread(plain, prompts.support, {
-      threadID: event.thread.id,
-      // Required on the SDK type, so there is nothing to guard against here.
-      customerID: event.thread.customer.id,
-      timelineEntryID: entryID,
-      gated: config.gated.support,
-    })
-      .then((r) => console.log(`   support done: [${r.actions.join(", ")}] steps=${r.steps}`))
-      .catch((err) => console.error("   support turn failed:", err));
-  }
+  const threadID = threadIDOf(message);
+  console.log(`   turn on ${message.discussion.id} (thread ${threadID ?? "none"})`);
+
+  void handleDiscussion(plain, systemPrompt, text, {
+    discussionID: message.discussion.id,
+    threadID,
+  })
+    .then((r) => console.log(`   done: answered=${r.answered} steps=${r.steps}`))
+    .catch((err) => console.error("   turn failed:", err));
 }
-
-export type Prompts = { support: string; internal: string };
 
 // Says why a delivery was dropped. Silence is the worst answer when nothing appears to happen.
 function skip(why: string): void {

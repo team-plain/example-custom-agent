@@ -1,14 +1,16 @@
 import { defineChannel, POST } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import { verifyPlainWebhook } from "@team-plain/webhooks";
-import { Plain } from "#lib/plain.ts";
+import { plain, rememberThread } from "#lib/client.ts";
 import {
   PendingApprovals,
   SeenDeliveries,
   approvalKey,
   optionIDFor,
   promptFrom,
+  promptWithThread,
   shouldAnswer,
+  threadIDOf,
   type ApprovalResolved,
   type MessageCreated,
 } from "#lib/decide.ts";
@@ -32,17 +34,7 @@ const gated = new Map<string, string>();
 
 const awaitingApproval = new PendingApprovals();
 
-let client: Plain | undefined;
 let machineUserID: Promise<string> | undefined;
-
-function plain(): Plain {
-  if (client === undefined) {
-    const apiKey = (process.env.PLAIN_API_KEY ?? "").trim();
-    if (apiKey === "") throw new Error("set PLAIN_API_KEY in .env");
-    client = new Plain(apiKey, (process.env.PLAIN_API_URL ?? "").trim() || undefined);
-  }
-  return client;
-}
 
 // Cleared on rejection: caching the promise would let one failed identity query poison every
 // later delivery until the process restarts.
@@ -214,9 +206,13 @@ async function startTurn(
   const text = promptFrom(payload);
   if (text === "") return;
 
+  // Recorded before the turn starts, because a tool checks the id the model types back against it.
+  const threadID = threadIDOf(payload);
+  if (threadID !== null) rememberThread(threadID);
+
   // from(discussion.id) creates the session on the first message and resumes it on later ones,
   // which is the whole discussion-to-session mapping.
-  waitUntil(from(payload.discussion.id).send(text, { auth: null }));
+  waitUntil(from(payload.discussion.id).send(promptWithThread(text, threadID), { auth: null }));
 }
 
 // The address a channel operation was bound to is the Plain discussion id, because that is the
