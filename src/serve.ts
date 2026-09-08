@@ -86,10 +86,13 @@ class Agent {
     // Not fatal: the answer still matters even if the spinner never appears.
     await this.setStatus(discussionID, "IN_PROGRESS");
 
-    const prompt = await this.buildPrompt(payload);
-
+    let prompt: string;
     let answer: string;
     try {
+      // Both inside the try. Building the prompt asks the runtime whether a session is resumable,
+      // and in a sandbox that creates the VM and installs the CLI, so it can fail. A throw out
+      // here left the discussion on IN_PROGRESS with no reply and the message already seen.
+      prompt = await this.buildPrompt(payload);
       answer = await this.runner.ask(discussionID, prompt);
     } catch (err) {
       console.log(`${dim(discussionID)} ${red("claude failed")} ${message(err)}`);
