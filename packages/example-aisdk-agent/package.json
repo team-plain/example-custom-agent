@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
     "@team-plain/graphql": "^3.0.0",
     "@team-plain/webhooks": "^1.9.0",
     "ai": "^5.0.0",

@@ -116,7 +116,7 @@ export default defineChannel({
         awaitingApproval.opened(discussionID);
 
         await plain().upsertToolCall(discussionID, toolCallID, "PENDING", describe(request.action));
-        await plain().requestApproval(discussionID, toolCallID, request.prompt);
+        await plain().requestApproval(discussionID, toolCallID, justify(request));
       }
     },
 
@@ -227,6 +227,16 @@ function discussionOf(channel: { continuation?: { token: string } }): string {
   return token;
 }
 
+/**
+ * What the reviewer reads under the card.
+ *
+ * eve's own prompt is generic ("Approve tool call: page_oncall"), so the arguments go in too:
+ * nobody can approve a call whose inputs they cannot see.
+ */
+function justify(request: { prompt: string; action: { toolName: string; input: unknown } }): string {
+  return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
+}
+
 function describe(action: { toolName: string; input: unknown }): string {
   return truncate(`${action.toolName}(${JSON.stringify(action.input)})`, 2000);
 }
@@ -285,7 +295,12 @@ function callIDOf(result: unknown): string | undefined {
 
 /** The failure is posted before the status settles, so the user reads what went wrong. */
 async function reportFailure(discussionID: string, message: string): Promise<void> {
-  awaitingApproval.settled(discussionID);
   await plain().sendMessage(discussionID, `The agent could not finish this turn.\n\n> ${message}`);
-  await plain().setAgentStatus(discussionID, "IDLE");
+
+  // Only a person can close an open card, so the status write is skipped rather than attempted:
+  // Plain refuses it, and an unchecked failure here would bury the report just posted.
+  if (awaitingApproval.canSettleStatus(discussionID)) {
+    await plain().setAgentStatus(discussionID, "IDLE");
+  }
+  awaitingApproval.settled(discussionID);
 }

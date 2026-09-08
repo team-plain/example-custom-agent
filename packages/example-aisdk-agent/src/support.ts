@@ -85,18 +85,36 @@ function threadTools(plain: Plain, context: SupportContext, actions: string[]): 
         // The gate. Drafting is the default because the alternative is an unreviewed message to a
         // real customer, which is not a default an example should ship.
         if (context.gated) {
-          if (context.timelineEntryID === null) {
-            return { sent: false, reason: "no customer message to attach a suggestion to" };
+          // The triggering event often carries no message, so fall back to looking the newest
+          // customer message up. Without this an assignment-driven agent can never suggest.
+          const entryID =
+            context.timelineEntryID ?? (await plain.latestCustomerEntryID(context.threadID));
+          if (entryID === null) {
+            return {
+              outcome: "failed",
+              detail: "No customer message exists to attach a draft to. Hand off instead.",
+            };
           }
-          await plain.suggestReply(context.threadID, context.timelineEntryID, markdown);
+          await plain.suggestReply(context.threadID, entryID, markdown);
           actions.push("suggested a reply for review");
-          return { sent: false, suggested: true };
+
+          // A draft nobody sees is not a draft. Only HANDED_OFF threads appear in the human
+          // queues, so leaving this IN_PROGRESS would hide the very thing needing review.
+          await handOff(plain, context, "Drafted a reply for review. Please check it and send.");
+          // Spelled out because the model reads the result and acts on it: an earlier version
+          // returned `sent: false`, which it read as failure and then handed off apologising.
+          return {
+            outcome: "drafted",
+            detail:
+              "Your answer was saved as a draft for a teammate to review and send. This is " +
+              "success and the turn is complete. Do not retry, and do not hand off.",
+          };
         }
 
         await plain.replyToThread(context.threadID, markdown);
         actions.push("replied to the customer");
         await plain.setThreadAgentStatus(context.threadID, "HANDLED");
-        return { sent: true };
+        return { outcome: "sent", detail: "Your answer was delivered. The turn is complete." };
       },
     }),
 

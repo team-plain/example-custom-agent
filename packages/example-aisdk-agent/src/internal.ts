@@ -21,6 +21,14 @@ export type InternalOutcome = { answered: boolean; steps: number };
 const APPROVAL_TIMEOUT_MS = 300_000;
 const APPROVAL_POLL_MS = 2_000;
 
+/**
+ * Discussions left with an approval card open.
+ *
+ * Only `resolveDiscussionApproval` clears TOOL_CALL_APPROVAL_PENDING, and a machine user is not
+ * allowed to call it, so an unanswered card cannot be closed by this agent at all.
+ */
+const approvalOpen = new Set<string>();
+
 export async function handleDiscussion(
   plain: Plain,
   system: string,
@@ -49,9 +57,12 @@ export async function handleDiscussion(
     );
     return { answered: false, steps: 0 };
   } finally {
-    // Settles last on purpose: posting the reply is what marks the discussion unread, so settling
-    // first would claim the agent had finished before its answer existed.
-    await plain.setDiscussionAgentStatus(context.discussionID, "IDLE");
+    // Settles last, because posting the reply is what marks the discussion unread. Skipped while a
+    // card is open: Plain refuses a status then, and an unchecked write crashes the whole turn.
+    if (!approvalOpen.has(context.discussionID)) {
+      await plain.setDiscussionAgentStatus(context.discussionID, "IDLE");
+    }
+    approvalOpen.delete(context.discussionID);
   }
 }
 
@@ -106,19 +117,27 @@ async function waitForApproval(
   toolCallID: string,
   text: string,
 ): Promise<Decision> {
-  await plain.requestApproval(discussionID, toolCallID, `The agent wants to ${text}.`);
+  // No trailing period: `text` already ends with the model's own summary, which usually has one.
+  await plain.requestApproval(discussionID, toolCallID, `The agent wants to ${text}`);
+  approvalOpen.add(discussionID);
 
   const deadline = Date.now() + APPROVAL_TIMEOUT_MS;
 
   while (Date.now() < deadline) {
     const outcome = await plain.approvalOutcome(discussionID, toolCallID);
-    if (outcome?.decision === "APPROVED") return { denied: false, note: null };
-    if (outcome?.decision === "DENIED") return { denied: true, note: outcome.reviewerNote };
+    if (outcome?.decision === "APPROVED") {
+      approvalOpen.delete(discussionID);
+      return { denied: false, note: null };
+    }
+    if (outcome?.decision === "DENIED") {
+      approvalOpen.delete(discussionID);
+      return { denied: true, note: outcome.reviewerNote };
+    }
     await sleep(APPROVAL_POLL_MS);
   }
 
-  // Nobody decided. Reported as an error so the timeline does not keep a call PENDING forever,
-  // which would leave the discussion looking like it is still waiting on the agent.
+  // Nobody decided, so the call is failed to stop it reading as still running. The card stays
+  // open: only a person can close it, so `approvalOpen` keeps the status write from being tried.
   await plain.upsertToolCall(
     discussionID,
     toolCallID,

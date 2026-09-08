@@ -111,11 +111,12 @@ npm run dev --no-workspaces     # eve's dev server and REPL
 
 ## The model credential
 
-eve's default model is a string id routed through the Vercel AI Gateway, which needs
-`AI_GATEWAY_API_KEY`, or a `VERCEL_OIDC_TOKEN` that `eve link` pulls from a Vercel project.
+`agent/agent.ts` uses `anthropic/claude-haiku-4.5`, a string id routed through the Vercel AI
+Gateway, which needs `AI_GATEWAY_API_KEY` or a `VERCEL_OIDC_TOKEN` that `eve link` pulls from a
+Vercel project. Haiku is the default because this example is meant to be run repeatedly.
 
-To skip the gateway, use a provider model directly: install `@ai-sdk/anthropic`, set
-`ANTHROPIC_API_KEY`, and pass the model object in `agent/agent.ts`.
+To skip the gateway, install a provider package such as `@ai-sdk/openai`, set that provider's key,
+and pass its model object in `agent/agent.ts` instead of the string.
 
 ## What has not been verified
 

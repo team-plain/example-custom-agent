@@ -118,6 +118,7 @@ export async function runServe(plain: Plain, config: Config, prompts: Prompts): 
       if (verified.error) return new Response(verified.error.message, { status: 400 });
 
       const payload = verified.data.payload as unknown as { eventType: string };
+      console.log(`<- ${payload.eventType}`);
       dispatch(plain, config, prompts, myID, payload);
 
       // 200 before the work: Plain retries a slow delivery, and a turn outlives the request.
@@ -142,24 +143,32 @@ function dispatch(
   if (surface === "internal" && config.surfaces.internal) {
     const message = payload as unknown as DiscussionPayload;
     if (payload.eventType !== "discussion.message_created") return;
-    if (!shouldAnswerDiscussion(message, myID)) return;
-    if (alreadyHandled(message.message.id)) return;
+    if (!shouldAnswerDiscussion(message, myID)) return skip("not this agent's discussion turn");
+    if (alreadyHandled(message.message.id)) return skip("already handled");
 
     const text = (message.message.markdown ?? message.message.text ?? "").trim();
-    if (text === "") return;
+    if (text === "") return skip("empty message");
+
+    console.log(`   internal turn on ${message.discussion.id}`);
 
     void handleDiscussion(plain, prompts.internal, text, {
       discussionID: message.discussion.id,
       gated: config.gated.internal,
-    }).catch((err) => console.error("discussion turn failed:", err));
+    })
+      .then((r) => console.log(`   internal done: answered=${r.answered} steps=${r.steps}`))
+      .catch((err) => console.error("   internal turn failed:", err));
     return;
   }
 
   if (surface === "support" && config.surfaces.support) {
     const event = payload as unknown as ThreadPayload;
-    if (!shouldAnswerThread(event, myID)) return;
+    if (!shouldAnswerThread(event, myID)) return skip("thread is not assigned to this agent");
     const entryID = timelineEntryIDOf(event);
-    if (alreadyHandled(`${payload.eventType}:${event.thread.id}:${entryID ?? ""}`)) return;
+    if (alreadyHandled(`${payload.eventType}:${event.thread.id}:${entryID ?? ""}`)) {
+      return skip("already handled");
+    }
+
+    console.log(`   support turn on ${event.thread.id}`);
 
     void handleThread(plain, prompts.support, {
       threadID: event.thread.id,
@@ -167,8 +176,15 @@ function dispatch(
       customerID: event.thread.customer.id,
       timelineEntryID: entryID,
       gated: config.gated.support,
-    }).catch((err) => console.error("thread turn failed:", err));
+    })
+      .then((r) => console.log(`   support done: [${r.actions.join(", ")}] steps=${r.steps}`))
+      .catch((err) => console.error("   support turn failed:", err));
   }
 }
 
 export type Prompts = { support: string; internal: string };
+
+// Says why a delivery was dropped. Silence is the worst answer when nothing appears to happen.
+function skip(why: string): void {
+  console.log(`   skipped: ${why}`);
+}
