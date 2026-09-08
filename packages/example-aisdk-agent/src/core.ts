@@ -29,9 +29,8 @@ export type TurnRequest = {
 /**
  * The one model-calling path both surfaces share.
  *
- * It knows nothing about Plain. Each surface passes its own tools, already wrapped in whatever
- * human gate that surface has, which is the only honest way to share this: the gate mechanisms
- * differ, so they cannot live here.
+ * It knows nothing about Plain. Each surface passes its own tools, already wrapped in its own
+ * human gate, because the gate mechanisms differ and cannot live here.
  */
 export async function runTurn({ system, prompt, tools }: TurnRequest): Promise<Turn> {
   const result = await generateText({

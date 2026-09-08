@@ -6,9 +6,8 @@ import type { Plain } from "./plain.ts";
 /**
  * The internal-agent surface: an agent in a Sidekick discussion, answering your own team.
  *
- * The gate here is a real approval card, because discussions have one: report the call, ask, and
- * wait for a person. Compare `support.ts`, where the same idea is expressed by drafting a reply
- * instead of sending it, since threads have no card.
+ * Discussions have an approval card, so the gate is the real thing. Compare `support.ts`, where
+ * the same idea is a drafted reply instead.
  */
 export type InternalContext = {
   discussionID: string;
@@ -98,9 +97,8 @@ type Decision = { denied: boolean; note: string | null };
 /**
  * Waits for a person to decide, by polling.
  *
- * Polling keeps the flow readable in one function. The webhooks
- * `discussion.tool_call_approval_requested` and `discussion.tool_call_approval_resolved` are the
- * better choice once a turn can outlive the process; `example-eve-agent` uses those.
+ * Polling keeps the flow in one function. The approval webhooks are the better choice once a turn
+ * can outlive the process, and `example-eve-agent` uses those.
  */
 async function waitForApproval(
   plain: Plain,

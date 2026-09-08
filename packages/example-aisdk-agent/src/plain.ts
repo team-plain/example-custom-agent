@@ -19,9 +19,8 @@ type MutationError = { message: string; code: string } | null;
 /**
  * Both surfaces' calls on one client.
  *
- * They are deliberately together: this package exists so the two can be compared, and splitting
- * the client would hide how much they share (one key, one endpoint) and how little they overlap
- * (no mutation below is used by both).
+ * Together on purpose: splitting it would hide how much they share (one key, one endpoint) and how
+ * little they overlap (no mutation below serves both).
  */
 export class Plain {
   private readonly sdk: PlainSDK;

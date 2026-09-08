@@ -1,4 +1,11 @@
 import { verifyPlainWebhook } from "@team-plain/webhooks";
+import type {
+  DiscussionMessageCreatedPublicEventPayload,
+  ThreadAssignmentTransitionedPublicEventPayload,
+  ThreadChatReceivedPublicEventPayload,
+  ThreadCreatedPublicEventPayload,
+  ThreadEmailReceivedPublicEventPayload,
+} from "@team-plain/webhooks";
 import { INTERNAL_EVENTS, PORT, SUPPORT_EVENTS, WEBHOOK_PATH, type Config } from "./config.ts";
 import { handleDiscussion } from "./internal.ts";
 import { handleThread } from "./support.ts";
@@ -50,25 +57,40 @@ export function shouldAnswerDiscussion(payload: DiscussionPayload, myID: string)
  * can change it without a deploy, and reporting attributes the work to the agent.
  */
 export function shouldAnswerThread(payload: ThreadPayload, myID: string): boolean {
-  return payload.thread.assignee?.id === myID;
+  return assigneeID(payload.thread.assignee) === myID;
 }
 
-export type DiscussionPayload = {
-  eventType: string;
-  discussion: { id: string; type: string; status: string; agent?: { id: string } | null };
-  message: { id: string; type: string; text?: string | null; markdown?: string | null };
-};
+/**
+ * The SDK's own payload types, not hand-written ones.
+ *
+ * An invented shape typechecks and then reads undefined on the first real delivery.
+ */
+export type DiscussionPayload = DiscussionMessageCreatedPublicEventPayload;
 
-export type ThreadPayload = {
-  eventType: string;
-  thread: {
-    id: string;
-    assignee?: { id: string } | null;
-    customer?: { id: string } | null;
-  };
-  /** Present on message events, and what a suggested reply must hang off. */
-  timelineEntryId?: string | null;
-};
+export type ThreadPayload =
+  | ThreadCreatedPublicEventPayload
+  | ThreadEmailReceivedPublicEventPayload
+  | ThreadChatReceivedPublicEventPayload
+  | ThreadAssignmentTransitionedPublicEventPayload;
+
+/**
+ * The customer message a suggested reply must hang off, per event type.
+ *
+ * It is nested on the message, not at the payload root, and thread_created and assignment events
+ * carry no message at all.
+ */
+export function timelineEntryIDOf(payload: ThreadPayload): string | null {
+  if (payload.eventType === "thread.email_received") return payload.email.timelineEntryId;
+  if (payload.eventType === "thread.chat_received") return payload.chat.timelineEntryId;
+  return null;
+}
+
+// ThreadAssignee is a union and its UNKNOWN variant carries no id, so this cannot just read .id.
+function assigneeID(assignee: ThreadPayload["thread"]["assignee"]): string | null {
+  if (assignee === null) return null;
+  if ("id" in assignee && typeof assignee.id === "string") return assignee.id;
+  return null;
+}
 
 export async function runServe(plain: Plain, config: Config, prompts: Prompts): Promise<void> {
   const myID = await plain.myMachineUserID();
@@ -136,17 +158,14 @@ function dispatch(
   if (surface === "support" && config.surfaces.support) {
     const event = payload as unknown as ThreadPayload;
     if (!shouldAnswerThread(event, myID)) return;
-    if (alreadyHandled(`${payload.eventType}:${event.thread.id}:${event.timelineEntryId ?? ""}`)) {
-      return;
-    }
-
-    const customerID = event.thread.customer?.id;
-    if (customerID === undefined) return;
+    const entryID = timelineEntryIDOf(event);
+    if (alreadyHandled(`${payload.eventType}:${event.thread.id}:${entryID ?? ""}`)) return;
 
     void handleThread(plain, prompts.support, {
       threadID: event.thread.id,
-      customerID,
-      timelineEntryID: event.timelineEntryId ?? null,
+      // Required on the SDK type, so there is nothing to guard against here.
+      customerID: event.thread.customer.id,
+      timelineEntryID: entryID,
       gated: config.gated.support,
     }).catch((err) => console.error("thread turn failed:", err));
   }

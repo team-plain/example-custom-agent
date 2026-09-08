@@ -6,9 +6,8 @@ import type { Plain } from "./plain.ts";
 /**
  * The support-agent surface: an agent on a customer thread.
  *
- * The gate here is not an approval card, because threads have none. It is the choice between
- * `replyToThread`, which reaches the customer, and `addGeneratedReply`, which drafts for a person
- * to review and send. Same principle as the discussion surface, different mechanism.
+ * Threads have no approval card, so the gate is the choice between `replyToThread`, which reaches
+ * the customer, and `addGeneratedReply`, which drafts for a person.
  */
 export type SupportContext = {
   threadID: string;
