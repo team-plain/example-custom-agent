@@ -1,0 +1,21 @@
+name: CI
+on:
+  # No branch filter on pull_request on purpose: a stacked PR targets its base, not main, and
+  # filtering on main would leave exactly those PRs with no checks at all.
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned rather than latest: this repo is a reference implementation, so a reader who
+          # copies it should get the toolchain the tests were verified on.
+          bun-version: 1.2.10
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test

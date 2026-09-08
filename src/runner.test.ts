@@ -7,6 +7,10 @@ import { Runner } from "./runner.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+// The fake executor below runs no CLI, so the PATH probe is stubbed as well. Without this these
+// tests pass only on a machine that happens to have the agent CLI installed, which CI does not.
+const installed = () => true;
+
 // Records the argv it is handed instead of running anything, so a test can assert on the exact
 // command a turn would run without a CLI, a sandbox or a network.
 class RecordingExecutor implements Executor {
@@ -78,7 +82,7 @@ afterEach(async () => {
 describe("command construction", () => {
   test("the first turn opens a new session and carries the instructions", async () => {
     const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     expect(await runner.ask(id, "what is broken?")).toBe("hi");
@@ -98,7 +102,7 @@ describe("command construction", () => {
 
   test("a later turn resumes the stored session and drops the instructions", async () => {
     const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "first");
@@ -120,10 +124,10 @@ describe("command construction", () => {
     const local = new RecordingExecutor("local", claudeReply("hi", "ignored"));
     const sandbox = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
 
-    await (await Runner.create("claude", local)).ask(id, "same question");
+    await (await Runner.create("claude", local, installed)).ask(id, "same question");
     const localArgv = local.lastArgv;
     await rm(join(import.meta.dir, "..", "sessions", "claude", `${id}.txt`), { force: true });
-    await (await Runner.create("claude", sandbox)).ask(id, "same question");
+    await (await Runner.create("claude", sandbox, installed)).ask(id, "same question");
 
     // Only the invented session id differs, because each run mints its own.
     const strip = (argv: string[]) => argv.filter((arg) => !UUID.test(arg));
@@ -135,7 +139,7 @@ describe("command construction", () => {
   // nothing. Resuming it would fail every turn, so a fresh place has to start a new session.
   test("a fresh place ignores the stored session instead of resuming into nothing", async () => {
     const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "first");
@@ -160,7 +164,7 @@ describe("command construction", () => {
   // that failed after consuming it left the stale id on disk and every later turn resumed nothing.
   test("a fresh place clears the stored session even when the turn then fails", async () => {
     const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "first");
@@ -183,7 +187,7 @@ describe("command construction", () => {
   // prompt builder asks, or a replaced sandbox gets a bare question with no thread context.
   test("isResuming reports false on a fresh place, so the prompt is rebuilt", async () => {
     const executor = new RecordingExecutor("vercel-sandbox", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "first");
@@ -195,7 +199,7 @@ describe("command construction", () => {
 
   test("prepare runs once per ask, before the command is built", async () => {
     const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "one");
@@ -206,7 +210,7 @@ describe("command construction", () => {
 
   test("the discussion id reaches the executor, so a sandbox can be scoped to it", async () => {
     const executor = new RecordingExecutor("local", claudeReply("hi", "ignored"));
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     const id = track(discussionID());
 
     await runner.ask(id, "hello");
@@ -220,20 +224,36 @@ describe("command construction", () => {
 describe("runtime selection", () => {
   test("only Claude Code runs in a sandbox", async () => {
     const sandbox = new RecordingExecutor("vercel-sandbox", "");
-    await expect(Runner.create("codex", sandbox)).rejects.toThrow(/only runs with AGENT_RUNTIME=local/);
-    await expect(Runner.create("opencode", sandbox)).rejects.toThrow(/only runs with AGENT_RUNTIME=local/);
+    await expect(Runner.create("codex", sandbox, installed)).rejects.toThrow(
+      /only runs with AGENT_RUNTIME=local/,
+    );
+    await expect(Runner.create("opencode", sandbox, installed)).rejects.toThrow(
+      /only runs with AGENT_RUNTIME=local/,
+    );
   });
 
   test("Claude Code is accepted in both runtimes", async () => {
-    expect((await Runner.create("claude", new RecordingExecutor("local", ""))).name).toBe("claude");
-    expect((await Runner.create("claude", new RecordingExecutor("vercel-sandbox", ""))).name).toBe(
-      "claude",
+    const local = new RecordingExecutor("local", "");
+    const sandbox = new RecordingExecutor("vercel-sandbox", "");
+    expect((await Runner.create("claude", local, installed)).name).toBe("claude");
+    expect((await Runner.create("claude", sandbox, installed)).name).toBe("claude");
+  });
+
+  test("a missing CLI fails the local runtime loudly", async () => {
+    const local = new RecordingExecutor("local", "");
+    await expect(Runner.create("claude", local, () => false)).rejects.toThrow(
+      /"claude" is not on PATH/,
     );
+  });
+
+  test("a missing local CLI does not stop the sandbox runtime", async () => {
+    const sandbox = new RecordingExecutor("vercel-sandbox", "");
+    expect((await Runner.create("claude", sandbox, () => false)).name).toBe("claude");
   });
 
   test("closing the runner releases the executor", async () => {
     const executor = new RecordingExecutor("local", "");
-    const runner = await Runner.create("claude", executor);
+    const runner = await Runner.create("claude", executor, installed);
     await runner.close();
     expect(executor.closed).toBe(1);
   });
