@@ -1,4 +1,7 @@
 .env
+.env.*
+# The template must be committed. It has to come after .env.* to override it, and every value in
+# it stays empty: it is the one file whose job is to look like a filled-in .env.
+!.env.example
 sessions/
 node_modules/
-.env.*
