@@ -65,7 +65,13 @@ export class Runner {
     private readonly instructions: string,
   ) {}
 
-  static async create(name: ProviderName, executor: Executor): Promise<Runner> {
+  static async create(
+    name: ProviderName,
+    executor: Executor,
+    // Injectable because a test that hands in a fake executor should not depend on whether this
+    // machine happens to have the CLI installed.
+    onPath: (bin: string) => boolean = (bin) => Bun.which(bin) !== null,
+  ): Promise<Runner> {
     const provider = PROVIDERS[name];
     if (executor.runtime === "vercel-sandbox" && !SANDBOX_PROVIDERS.includes(name)) {
       throw new Error(
@@ -75,7 +81,7 @@ export class Runner {
     }
     // Only the local runtime needs the CLI here. The sandbox has its own PATH, and demanding a
     // local copy would defeat the point of running it elsewhere.
-    if (executor.runtime === "local" && !Bun.which(provider.bin)) {
+    if (executor.runtime === "local" && !onPath(provider.bin)) {
       throw new Error(`"${provider.bin}" is not on PATH`);
     }
 
