@@ -1,0 +1,24 @@
+{
+  "name": "example-aisdk-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "bun run src/index.ts serve",
+    "check": "bun run src/index.ts check",
+    "help": "bun run src/index.ts help",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@team-plain/graphql": "^3.0.0",
+    "@team-plain/webhooks": "^1.9.0",
+    "ai": "^5.0.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
