@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 /**
  * Prod unless PLAIN_API_URL says otherwise. The override exists so the approval flow can be driven
  * against dev-uk without editing the source; leave it unset and this example talks to production.
@@ -30,7 +32,9 @@ export type Config = {
  * different machine user, and the only symptom is answers appearing under the wrong name.
  */
 export async function loadDotEnv(): Promise<void> {
-  const file = Bun.file(".env");
+  // Anchored to the package rather than the working directory: this agent is meant to be started
+  // from whatever codebase it should look at, and a cwd-relative .env reads nothing there.
+  const file = Bun.file(join(import.meta.dir, "..", ".env"));
   if (!(await file.exists())) return;
 
   for (const rawLine of (await file.text()).split("\n")) {

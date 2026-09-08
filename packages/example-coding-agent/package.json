@@ -1,0 +1,22 @@
+{
+  "name": "example-coding-agent",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  },
+  "private": true,
+  "scripts": {
+    "serve": "bun run src/index.ts serve",
+    "check": "bun run src/index.ts check",
+    "help": "bun run src/index.ts help",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "dependencies": {
+    "@team-plain/graphql": "^3.0.0",
+    "@team-plain/webhooks": "^1.9.0",
+    "@vercel/sandbox": "3.2.1"
+  }
+}

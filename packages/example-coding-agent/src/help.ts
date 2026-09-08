@@ -26,7 +26,7 @@ const VARIABLES: [string, string][] = [
 
 /** Runs before the config is validated, so it still works when .env is the thing that is wrong. */
 export function runHelp(): void {
-  console.log(`${bold("example-custom-agent")} ${dim("a custom agent for Plain, run by an agent CLI")}`);
+  console.log(`${bold("example-coding-agent")} ${dim("a custom agent for Plain, run by an agent CLI")}`);
 
   console.log(`\n${heading("commands")}`);
   for (const [usage, what] of COMMANDS) {

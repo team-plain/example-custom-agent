@@ -1,189 +1,62 @@
-# Example custom agent
+# Plain custom agent examples
 
-In Plain, Ask Sidekick lets a teammate pick which agent answers a thread. 
+Reference implementations of one protocol: **Plain sends a webhook, your agent takes a turn, your
+agent writes back.** Plain runs the infrastructure around the agent. The AI part, the model, the
+prompt and the tools, is yours.
 
-Pick a custom agent and power the Ask Sidekick surface with your own agent.
+Each package below builds that agent side a different way. They are examples to read and take
+from, not a framework to depend on.
 
-## How it works
-Plain fires a webhook at your server and waits for you to write the reply
-back. It answers by running the `claude` CLI, then posts the answer into the
-discussion.
-```
-┌─────────────────────┐                              ┌─────────────────────┐
-│        Plain        │  discussion.message_created  │     this process    │
-│     Ask Sidekick    │ ───────────────────────────> │    bun run serve    │
-│                     │                              │                     │
-│                     │ <─────────────────────────── │                     │
-└─────────────────────┘    sendDiscussionMessage     └──────────┬──────────┘
-                                                                │
-                                          AGENT_RUNTIME decides where
-                                                                │
-                                         ┌──────────────────────┴───────────┐
-                                         v                                  v
-                              ┌─────────────────────┐          ┌─────────────────────┐
-                              │  local (default)    │          │   vercel-sandbox    │
-                              │     claude -p       │          │  claude -p, in a VM │
-                              │   on this machine   │          │  one per discussion │
-                              └─────────────────────┘          └─────────────────────┘
-```
+The protocol itself lives in Plain's docs rather than in this repo.
+[Build a support agent](https://www.plain.com/docs/agents/support-agent) and
+[Build an internal agent](https://www.plain.com/docs/agents/internal-agent) give every event and every API
+call, so you can build this in a language none of these packages use.
 
-Claude runs with `--permission-mode auto`, and the prompt is whatever someone typed into a
-discussion. **On the default `local` runtime that means anyone in your workspace effectively has a
-shell on this machine.** Set `AGENT_RUNTIME=vercel-sandbox` in production, which is the same command
-in a throwaway VM instead. See [Where the CLI runs](#where-the-cli-runs).
+## The packages
 
-Written in TypeScript, run with [Bun](https://bun.sh).
-
-## Setting it up
-
-1. Create a machine user under [Settings → Machine users](https://app.plain.com/~/settings/machine-users/)
-   and give it an API key.
-
-   Make sure you also toggle the "Custom agent" toggle on the machine user so it's available as a
-   target when running a Sidekick conversation.
-
-   Minimum permissions required:
-
-   - `threadDiscussionMessage:create`
-   - `threadDiscussion:read`
-
-2. Copy `.env.example` to `.env`.
-
-   Fill in `PLAIN_API_KEY`, and `PLAIN_WEBHOOK_SECRET` from
-   [Settings → Request Signing](https://app.plain.com/~/settings/request-signing/).
-
-3. Get a public https URL that reaches this process. To run locally, use `ngrok http 8081`.
-
-   Otherwise it's wherever you deploy it, which has to be somewhere that holds a long-running
-   process. It also needs the `claude` CLI installed, unless you set `AGENT_RUNTIME=vercel-sandbox`
-   and let the sandbox carry it.
-
-   Put the URL in `.env` as `PUBLIC_URL`.
-
-4. Create the webhook under
-   [Settings → Webhooks → Add webhook target](https://app.plain.com/~/settings/webhooks/add/).
-
-   Pointed at `$PUBLIC_URL/plain/webhook`, subscribed to `discussion.message_created`, on version
-   `2026-09-06`. The version has to match `@team-plain/webhooks` exactly, see below.
-
-## Running it
-
-```
-bun install
-bun run help      # the commands, which provider CLIs are installed, what .env is missing
-bun run check     # who the key is, what it can do, where the webhooks point
-bun run serve
-```
-
-Then open a thread in Plain, click Ask Sidekick, pick your agent and ask it something.
-
-The system prompt is `prompt.md`, prepended to the first message of each discussion. Edit it to
-change what the agent is and what it will do.
-
-Each turn runs `IN_PROGRESS` → post the answer → `IDLE`, and a failed turn posts the error and still
-settles on `IDLE`. Posting the answer is what marks the discussion unread, not the status change, so
-settle last only to stop the status claiming the agent is still working.
-
-Set `PLAIN_RESOLVE_WHEN_DONE=1` to also resolve the discussion once the agent has answered, via
-`changeThreadDiscussionStatus`. It is off by default, because this example cannot tell a finished
-conversation from a pause and a resolved discussion drops out of the customer's view. See
-[PROTOCOL.md](PROTOCOL.md) for when to reach for it.
-
-## Webhook version, the one setting that silently wastes an afternoon
-
-**`@team-plain/webhooks` pins exactly one webhook target version.** Not a minimum: a target set
-**newer** than the package fails just as hard as one set older.
-
-| `@team-plain/webhooks` | required target version |
-| --- | --- |
-| 1.7.1 | `2026-08-19` |
-| 1.8.0 | `2026-08-31` |
-| 1.9.0 | `2026-09-06` (what this example uses) |
-
-A mismatch does not look like a version problem. Plain delivers, your server answers **401**, and the
-discussion sits on "thinking" forever. Only your own log says why. Change both together.
-
-## Approving what the agent does
-
-**Before the agent posts its answer, it asks a human.** The draft appears in the app as a card with
-Approve and Deny, and the agent waits. Deny with a note and it redrafts once, then asks again.
-
-`PLAIN_GATE_REPLY=0` turns that off. `PLAIN_GATE_RESOLVE=0` turns off the same gate on resolving, which
-only applies when `PLAIN_RESOLVE_WHEN_DONE=1`. **Both are on by default**: an example that ships the gate
-switched off teaches nothing. The failure report the agent posts when its runner dies is never gated,
-because a gated failure notice can leave a broken discussion silent.
-
-The agent gates its own writes rather than tool calls, because it delegates thinking to a CLI and never
-sees a tool call. A real agent gates tool calls the same way. [PROTOCOL.md](PROTOCOL.md) has the flow.
-
-It learns the decision by polling, which keeps the flow readable in one function. There are webhooks
-for it, `discussion.tool_call_approval_requested` and `discussion.tool_call_approval_resolved`, and
-they are the better choice once a turn can outlive the process. PROTOCOL.md has both payloads.
-
-`PLAIN_API_URL` overrides the API endpoint, which defaults to production. Set it to run this against
-another stage.
-
-## Using a different agent CLI
-
-Claude Code is the default. `--provider` swaps it for another CLI you have installed and logged in
-already, since this project holds no model API key of its own.
-
-```
-bun run serve --provider codex     # claude (default), codex, pi, opencode
-```
-
-Sessions are stored per provider, one file per discussion, in `sessions/<provider>/`.
-
-## Where the CLI runs
-
-`AGENT_RUNTIME` picks the runtime. It defaults to `local`, so nothing changes until you set it.
-
-| | `local` (default) | `vercel-sandbox` |
+| Package | Agent built with | Reach for it when |
 | --- | --- | --- |
-| Where the CLI runs | this machine | a Vercel Sandbox, one per discussion |
-| Needs the CLI installed here | yes | no |
-| Sees the directory you started in | yes | no, the sandbox starts empty |
-| Authenticates as | your own CLI login | `ANTHROPIC_API_KEY` from `.env` |
-| Providers | all four | `claude` only |
+| [`example-coding-agent`](packages/example-coding-agent) | an agent CLI you already run (`claude`, `codex`, `pi`, `opencode`) | you want the shortest path to a working agent, and the reasoning already happens in a CLI you trust. No model API key of its own. |
+| `example-eve-agent` | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and sandboxed compute handed to you rather than hand-rolled. |
+| `example-aisdk-agent` | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop, and to see both of Plain's agent surfaces side by side on the raw API. |
 
-The command is identical in both. Only the machine it runs on differs, so the prompt, the system
-prompt and `--resume` behave the same either way.
+**Only `example-coding-agent` is in the repo today.** The other two are in progress and land as
+their own packages under `packages/`. This table is the shape they land into.
+
+Setup is per package: each one has its own `README.md` and its own `.env`, because what they need
+differs. Start there, not here.
+
+## The two surfaces
+
+Plain has two places a custom agent can run, and they use different events and different mutations:
+
+- A **support agent** works customer threads. It answers `thread.*` webhooks, reads the
+  conversation, and replies, labels, notes, or hands off to a person. What it sends reaches the
+  customer. See [Build a support agent](https://www.plain.com/docs/agents/support-agent).
+- An **internal agent** answers your own team inside a Sidekick conversation. It answers
+  `discussion.message_created`, reports its status, reports its tool calls, and can gate an action
+  on someone's approval. Nothing it writes reaches the customer. See
+  [Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
+
+`example-coding-agent` and `example-eve-agent` are internal agents. `example-aisdk-agent` does
+both, from one shared core, which makes it the one place to compare them.
+
+## Repo layout
 
 ```
-AGENT_RUNTIME=vercel-sandbox
-VERCEL_BEARER_TOKEN=...
-VERCEL_SANDBOX_TEAM_ID=...
-VERCEL_SANDBOX_PROJECT_ID=...
-ANTHROPIC_API_KEY=...
+package.json                        Bun workspace root
+packages/
+  example-coding-agent/             an agent CLI does the thinking
 ```
 
-**One sandbox per discussion, and it is persistent.** The CLI's own session files live inside it, so
-`--resume` on the second turn finds the first. Its session lasts ten minutes, which is a lifetime and
-not an idle timer, and each turn asks to extend it. When it does stop, Vercel resumes it with its
-files on the next turn: stopping is not deleting.
+`bun install` from the root or from any package resolves the whole workspace. `bun run test` and
+`bun run typecheck` at the root run across every package.
 
-**After a week the sandbox is collected, and the discussion starts a new session rather than
-breaking.** A replaced sandbox holds none of the CLI's files, so the agent notices and opens a fresh
-session instead of resuming an id that points at nothing. The discussion keeps working, without the
-earlier context.
+## The approval gate
 
-**A sandbox holds none of your logins**, which is why `ANTHROPIC_API_KEY` is required here and not
-locally. It is passed into the sandbox per command and never printed. `ANTHROPIC_AUTH_TOKEN` and
-`ANTHROPIC_BASE_URL` are forwarded the same way, if you go through a gateway.
+Every package ships with the approval gate **on**. Before the agent's answer reaches anyone, a
+person sees a card with Approve and Deny.
 
-**Set `VERCEL_SANDBOX_SNAPSHOT_ID` if you have a snapshot with the CLI in it.** Without one, each new
-sandbox runs `npm install -g @anthropic-ai/claude-code` at first start, and the discussion's first
-turn waits for it. Either way the sandbox is checked for `claude` on PATH before any turn runs, so a
-snapshot built without it fails loudly rather than one turn at a time.
-
-**The sandbox isolates the machine, not the network.** It gets Vercel's default full internet
-access, which is what lets it install the CLI and reach the model. If the prompt should not be able
-to reach your internal services, give the sandbox a network policy: `@vercel/sandbox` takes one at
-creation, in `src/sandbox.ts`.
-
-`bun run check` prints which runtime is active and what it is missing.
-
-## Building your own
-
-[PROTOCOL.md](PROTOCOL.md) has the webhook payload, every API call with a working curl, and the
-gotchas, so you can implement this in any language.
+That is deliberate and it is not a default worth changing lightly: an example that shipped the gate
+switched off would teach you nothing about the part of building an agent that is actually hard. Each
+package documents its own switch for turning it off while you are experimenting.
