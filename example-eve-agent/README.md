@@ -75,9 +75,14 @@ root's `package.json`, and installs against that instead:
 
 ```bash
 cd example-eve-agent
+nvm use                    # reads .nvmrc, which pins 24
 npm install --no-workspaces
 npm run typecheck --no-workspaces
 ```
+
+`nvm use` is the step people skip. Every command here, `npm test` included, dies on
+`eve requires Node.js >=24` if your shell default is older, and `bun run` in this directory hits the
+same wall: `.nvmrc` records the version but nothing applies it for you.
 
 `eve` is pinned to an exact version rather than a caret. It is 0.x and in public beta, and its own
 terms say the APIs may change before general availability, so bump it deliberately and re-read
@@ -127,6 +132,7 @@ Before touching webhooks, watch a turn happen on its own. This is the fastest wa
 gateway key, your model and your knowledge base all work:
 
 ```
+nvm use
 npm ci --no-workspaces
 npm run typecheck --no-workspaces
 npm test --no-workspaces
@@ -140,10 +146,13 @@ before anything else.
 Then the real thing:
 
 ```
+nvm use
 npm run serve --no-workspaces
 ```
 
-Same script name and same port as the other package, which runs `bun run serve`. `npm run dev
+Same script name and same port as the other package, which runs `bun run serve`. Note the runner
+differs: this package is npm on Node 24 and the other is Bun, so `bun run serve` here fails on the
+version check. `npm run dev
 --no-workspaces` is the same server with eve's interactive UI in front of it, useful for talking to
 the agent directly and no use for reading webhook logs.
 
