@@ -1,12 +1,8 @@
 # example-eve-agent
 
-A Plain agent built on [eve](https://eve.dev/docs), Vercel's filesystem-first agent framework. An
-agent here is a directory: a system prompt, a model config, one file per tool, one file per channel.
+A Plain agent built on [eve](https://eve.dev/docs), Vercel's agent framework.
 
-Reach for this one when you want durable sessions, an approval gate the framework parks for you,
-and a model loop you do not have to write. For the other shape see the
-[repo README](../README.md), and for the protocol see
-[Build an internal agent](https://www.plain.com/docs/agents/internal-agent).
+The protocol with the Plain API & webhooks is documented [here](https://www.plain.com/docs/agents/internal-agent).
 
 ## How it works
 
