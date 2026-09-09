@@ -108,7 +108,7 @@ export default defineChannel({
         awaitingApproval.opened(discussionID);
 
         await plain().upsertToolCall(discussionID, toolCallID, "PENDING", describe(request.action));
-        await plain().requestApproval(discussionID, toolCallID, justify(request));
+        await plain().requestApproval(discussionID, toolCallID, await justify(request));
       }
     },
 
@@ -226,11 +226,43 @@ function discussionOf(channel: { continuation?: { token: string } }): string {
 /**
  * What the reviewer reads under the card.
  *
- * eve's own prompt is generic ("Approve tool call: page_oncall"), so the arguments go in too:
- * nobody can approve a call whose inputs they cannot see.
+ * eve's own prompt is generic ("Approve tool call: reply_to_customer"), so the arguments go in
+ * too: nobody can approve a call whose inputs they cannot see.
  */
-function justify(request: { prompt: string; action: { toolName: string; input: unknown } }): string {
-  return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
+async function justify(request: {
+  prompt: string;
+  action: { toolName: string; input: unknown };
+}): Promise<string> {
+  const reply = replyInput(request.action);
+  if (reply === null) {
+    return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
+  }
+
+  // The target leads, because the agent can reply to a thread it found in the queue rather than
+  // only the one it was handed. Approving a reply aimed at the wrong customer is the mistake here.
+  try {
+    const target = await plain().threadTarget(reply.threadId);
+    return truncate(
+      `Send this reply to ${target.customerName} on "${target.title}" (${target.id}):\n\n${reply.message}`,
+      4000,
+    );
+  } catch {
+    // A failed lookup must not block the gate. The id alone is worse than a name, not useless.
+    return truncate(`Send this reply on thread ${reply.threadId}:\n\n${reply.message}`, 4000);
+  }
+}
+
+// Narrows the tool input rather than trusting it: `input` is typed unknown at the channel edge.
+function replyInput(action: {
+  toolName: string;
+  input: unknown;
+}): { threadId: string; message: string } | null {
+  if (action.toolName !== "reply_to_customer") return null;
+  const input = action.input;
+  if (input === null || typeof input !== "object") return null;
+  const { threadId, message } = input as { threadId?: unknown; message?: unknown };
+  if (typeof threadId !== "string" || typeof message !== "string") return null;
+  return { threadId, message };
 }
 
 function describe(action: { toolName: string; input: unknown }): string {

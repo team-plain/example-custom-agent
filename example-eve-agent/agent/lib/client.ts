@@ -52,25 +52,39 @@ function dotEnvFirst(): Record<string, string | undefined> {
 }
 
 /**
- * Thread ids this process has actually been handed by a webhook.
+ * Threads this process is allowed to read or reply on.
  *
- * The thread id reaches a tool through the prompt, because an eve tool gets no channel context.
- * That means the model types it back, and a model can invent one, so a tool checks it here before
- * reading a stranger's conversation or replying on it.
+ * A thread id reaches a tool through the prompt, because an eve tool gets no channel context, so
+ * the model types it back and a model can invent one. An id lands here two ways only: a webhook
+ * delivered it, or one of the queue tools returned it. Anything else is refused.
+ *
+ * Process-wide rather than per turn, which is weaker than it could be. `example-aisdk-agent`
+ * builds its tools per turn and scopes the same set to that turn. eve trades that for tools that
+ * are independent files, and this is the cost.
  */
-const known = new Set<string>();
-const KNOWN_LIMIT = 1000;
+const reachable = new Set<string>();
+const REACHABLE_LIMIT = 1000;
 
 export function rememberThread(threadID: string): void {
-  if (known.size >= KNOWN_LIMIT) known.clear();
-  known.add(threadID);
+  if (reachable.size >= REACHABLE_LIMIT) reachable.clear();
+  reachable.add(threadID);
 }
 
 export function isKnownThread(threadID: string): boolean {
-  return known.has(threadID);
+  return reachable.has(threadID);
 }
 
 // Test seam. The set is module state and a test that populated it would leak into the next one.
 export function forgetThreads(): void {
-  known.clear();
+  reachable.clear();
+}
+
+/** What a tool returns when the model names a thread nothing has handed it. */
+export function refuseThread(threadID: string): { ok: false; reason: string } {
+  return {
+    ok: false,
+    reason:
+      `${threadID} is not a thread this agent has been given. Call list_thread_queue or ` +
+      "search_threads first, then use an id from those results exactly as written.",
+  };
 }

@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import replyToCustomer from "../agent/tools/reply_to_customer.ts";
 import searchKnowledge from "../agent/tools/search_knowledge.ts";
 import readCustomerThread from "../agent/tools/read_customer_thread.ts";
+import listThreadQueue from "../agent/tools/list_thread_queue.ts";
+import searchThreads from "../agent/tools/search_threads.ts";
+import { forgetThreads, isKnownThread, refuseThread, rememberThread } from "../agent/lib/client.ts";
 
 /**
  * The gate is one line of config, so a refactor can drop it and every other test still passes.
@@ -18,6 +21,8 @@ describe("which tools are gated", () => {
   test("the reads are not gated", () => {
     assert.equal(searchKnowledge.approval, undefined);
     assert.equal(readCustomerThread.approval, undefined);
+    assert.equal(listThreadQueue.approval, undefined);
+    assert.equal(searchThreads.approval, undefined);
   });
 });
 
@@ -37,5 +42,34 @@ describe("tool inputs", () => {
 
   test("search_knowledge takes a query", () => {
     assert.deepEqual(inputKeys(searchKnowledge.inputSchema), ["query"]);
+  });
+});
+
+describe("the reachable-thread guard", () => {
+  test("an id nothing handed over is refused", () => {
+    forgetThreads();
+    assert.equal(isKnownThread("th_invented"), false);
+    const refusal = refuseThread("th_invented");
+    assert.equal(refusal.ok, false);
+    assert.match(refusal.reason, /search_threads/);
+  });
+
+  // The widening the queue tools buy: an id they returned becomes reachable, and only then.
+  test("a discovered id becomes reachable", () => {
+    forgetThreads();
+    rememberThread("th_from_queue");
+    assert.equal(isKnownThread("th_from_queue"), true);
+    assert.equal(isKnownThread("th_other"), false);
+  });
+});
+
+describe("the queue tools", () => {
+  test("list_thread_queue defaults to the TODO queue", () => {
+    const status = inputKeys(listThreadQueue.inputSchema);
+    assert.deepEqual(status, ["status"]);
+  });
+
+  test("search_threads takes a query", () => {
+    assert.deepEqual(inputKeys(searchThreads.inputSchema), ["query"]);
   });
 });

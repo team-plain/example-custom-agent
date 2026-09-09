@@ -14,17 +14,22 @@ every API call, so you can build this in a language neither package uses.
 
 ## What the agent does
 
-A teammate opens Ask Sidekick on a customer's thread and asks the agent to handle it. From there:
+A teammate opens Ask Sidekick and asks the agent to handle a customer. From there:
 
 ```
-read_customer_thread    what did the customer actually ask
-search_knowledge        the workspace help center, as many searches as it needs
+list_thread_queue       what is waiting            \
+search_threads          find the one they mean     /  only needed when the
+read_customer_thread    what did the customer ask     discussion has no thread
+search_knowledge        the help center, as many searches as it takes
 reply_to_customer       a person approves, then it reaches the customer
 ```
 
 Every call lands on the discussion timeline as it happens, so the team watches the work instead of
 a spinner. The answer is grounded in the help center rather than in the model's memory, and the one
 call a customer ever sees is the one call a person decides.
+
+**A Sidekick session opened on nothing still works.** Plain does not always attach a thread, so the
+agent can search the queue and find the one it needs rather than giving up.
 
 ## The packages
 
@@ -50,11 +55,16 @@ Worth reading side by side, because the frameworks force genuinely different ans
 | Waiting for a person | eve parks the turn durably | the turn is held open in memory |
 | Plain writes come from | the channel's event handlers | the tool bodies |
 | A tool learns the thread id from | the prompt, then checks it | the closure it was built with |
+| Reachable threads are scoped | per process | per turn |
 
-The last row is the sharpest difference. An eve tool gets no channel context, so the thread id
-travels through the prompt and comes back as model output, which means the tools check it against
-what a webhook actually delivered before reading a conversation or replying on it. The AI SDK
-package builds its tools per turn, so the id is never in the model's hands at all.
+The last two rows are the sharpest difference, and the queue tools are what make them matter. Once
+an agent can discover threads nobody handed it, a thread id becomes model output, so both packages
+keep a set of ids that a webhook delivered or a search returned and refuse anything else.
+
+The AI SDK package builds its tools fresh per turn, so that set dies with the turn and what one
+discussion found is not another's to act on. An eve tool is an independent file with no turn
+context, so its set is process-wide. That is weaker, and it is the price eve charges for tools that
+are just files.
 
 ## Repo layout
 
@@ -78,6 +88,10 @@ globbing, since Bun ignores a negated pattern. Install and run that one from its
 `reply_to_customer` is gated in both packages, and there is no environment variable to switch it
 off. That is the point of the examples rather than a default worth tuning: everything else the
 agent does is a read, and this is the only call a customer ever sees.
+
+**The card leads with who receives the reply and on which thread**, not with the draft. Since the
+agent can now reply to a thread it found in the queue, approving a reply aimed at the wrong
+customer is the mistake the card exists to catch.
 
 Reads are deliberately not gated. A card per search would turn the gate into noise people click
 through, which is worse than no gate at all.

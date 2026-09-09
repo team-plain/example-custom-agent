@@ -2,14 +2,14 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { runTurn } from "./core.ts";
 import { truncate } from "./config.ts";
-import type { Plain } from "./plain.ts";
+import type { Plain, ThreadStatus } from "./plain.ts";
 
 /**
- * One agent turn in a Sidekick discussion opened on a customer thread.
+ * One agent turn in a Sidekick discussion.
  *
- * The agent reads the thread, searches the workspace knowledge, and proposes a reply. Every call
- * lands on the discussion timeline as it happens, so the team watches the work rather than a
- * spinner.
+ * The discussion may be attached to a customer thread or to nothing at all. Either way the agent
+ * can search the queue, so a session opened on nothing is still useful. Every call lands on the
+ * discussion timeline as it happens, so the team watches the work rather than a spinner.
  */
 export type TurnContext = {
   discussionID: string;
@@ -24,6 +24,7 @@ const APPROVAL_TIMEOUT_MS = 300_000;
 const APPROVAL_POLL_MS = 2_000;
 
 const KNOWLEDGE_RESULTS = 4;
+const QUEUE_RESULTS = 10;
 
 /**
  * Discussions left with an approval card open.
@@ -70,32 +71,95 @@ export async function handleDiscussion(
   }
 }
 
-// Says up front whether there is a customer thread, so the model does not reach for a tool that
-// cannot work and then apologise for it.
+// Says up front where the agent is, so it does not reach for its own thread when there is none and
+// then apologise for it.
 export function promptWithContext(prompt: string, context: TurnContext): string {
   const where =
     context.threadID === null
-      ? "This discussion is not attached to a customer thread, so you cannot read one or reply."
+      ? "This discussion is not attached to a customer thread. Use list_thread_queue or " +
+        "search_threads to find the thread you need."
       : `This discussion is attached to customer thread ${context.threadID}.`;
   return `${where}\n\n${prompt}`;
 }
 
+/**
+ * The threads this turn is allowed to touch.
+ *
+ * Seeded with the discussion's own thread and extended by whatever the queue and search return, so
+ * an id the model invented, or lifted from text inside a customer's message, is refused. Per turn
+ * rather than per process: what one discussion discovered is not another's to act on.
+ */
+function reachableThreads(context: TurnContext): Set<string> {
+  const reachable = new Set<string>();
+  if (context.threadID !== null) reachable.add(context.threadID);
+  return reachable;
+}
+
 function agentTools(plain: Plain, context: TurnContext): ToolSet {
+  const reachable = reachableThreads(context);
+
+  const refuse = (threadID: string) => ({
+    ok: false as const,
+    reason:
+      `${threadID} is not a thread this turn has seen. Use list_thread_queue or search_threads ` +
+      "first, then use an id from those results exactly as written.",
+  });
+
   return {
+    list_thread_queue: tool({
+      description:
+        "List the support queue. Use this when the discussion is not attached to a thread, or to " +
+        "see what else is waiting.",
+      inputSchema: z.object({
+        status: z
+          .enum(["TODO", "SNOOZED", "DONE"])
+          .default("TODO")
+          .describe("TODO is the queue of threads needing attention."),
+      }),
+      async execute({ status }) {
+        return report(plain, context, `listed the ${status} queue`, async () => {
+          const threads = await plain.listThreadQueue(status as ThreadStatus, QUEUE_RESULTS);
+          for (const thread of threads) reachable.add(thread.id);
+          return { found: threads.length, threads };
+        });
+      },
+    }),
+
+    search_threads: tool({
+      description:
+        "Search threads by what they are about, to find the one a question refers to. Returns " +
+        "thread ids you can then read or reply on.",
+      inputSchema: z.object({
+        query: z.string().min(1).describe("Words that would appear in the thread."),
+      }),
+      async execute({ query }) {
+        return report(plain, context, `searched threads for "${query}"`, async () => {
+          const threads = await plain.searchThreads(query, QUEUE_RESULTS);
+          for (const thread of threads) reachable.add(thread.id);
+          if (threads.length === 0) {
+            return { found: 0, threads: [], note: "No thread matched. Try different wording." };
+          }
+          return { found: threads.length, threads };
+        });
+      },
+    }),
+
     read_customer_thread: tool({
       description:
-        "Read the customer conversation this discussion was opened on. Call this first, so the " +
-        "answer addresses what the customer actually asked.",
-      inputSchema: z.object({}),
-      async execute() {
-        if (context.threadID === null) {
-          return { read: false, reason: "This discussion has no customer thread." };
-        }
+        "Read a customer conversation. Call this before answering, so the reply addresses what " +
+        "the customer actually asked.",
+      inputSchema: z.object({
+        threadId: z
+          .string()
+          .min(1)
+          .describe("This discussion's thread, or one from list_thread_queue or search_threads."),
+      }),
+      async execute({ threadId }) {
+        if (!reachable.has(threadId)) return refuse(threadId);
 
-        const threadID = context.threadID;
-        return report(plain, context, "read the customer thread", async () => {
-          const text = await plain.threadAsText(threadID);
-          return { read: true, conversation: text };
+        return report(plain, context, `read thread ${threadId}`, async () => {
+          const conversation = await plain.threadAsText(threadId);
+          return { read: true, threadId, conversation };
         });
       },
     }),
@@ -124,22 +188,24 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
         "Send a reply to the customer on their thread. A person must approve it first. Only call " +
         "this once you have grounded the answer in the knowledge base.",
       inputSchema: z.object({
+        threadId: z.string().min(1).describe("The thread to reply on. Must be one you have seen."),
         message: z.string().min(1).describe("The reply, in markdown, addressed to the customer."),
       }),
-      async execute({ message }) {
-        if (context.threadID === null) {
-          return { sent: false, reason: "This discussion has no customer thread to reply on." };
-        }
-        const threadID = context.threadID;
+      async execute({ threadId, message }) {
+        if (!reachable.has(threadId)) return refuse(threadId);
+
+        // Resolved now rather than reused from a list, because the card has to name who receives
+        // this. A reviewer approving a reply to the wrong customer is the failure to prevent.
+        const target = await plain.threadTarget(threadId);
 
         const toolCallID = `reply-to-customer-${Date.now()}`;
-        const text = `Reply to the customer: ${truncate(oneLine(message), 200)}`;
+        const text = `Reply to ${target.customerName} on "${target.title}": ${truncate(oneLine(message), 160)}`;
         await plain.upsertToolCall(context.discussionID, toolCallID, "PENDING", text);
 
         // Always gated, with no switch to turn it off. Everything else here is a read; this is the
         // one call a customer sees, so it is the one call a person decides.
         const decision = await waitForApproval(plain, context.discussionID, toolCallID, text, {
-          justification: `The agent wants to send this reply to the customer:\n\n${message}`,
+          justification: cardText(target, message),
         });
         if (decision.denied) {
           return {
@@ -152,7 +218,7 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
         }
 
         try {
-          await plain.replyToThread(threadID, message);
+          await plain.replyToThread(threadId, message);
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
           await plain.upsertToolCall(context.discussionID, toolCallID, "ERROR", text, reason);
@@ -160,10 +226,26 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
         }
 
         await plain.upsertToolCall(context.discussionID, toolCallID, "SUCCESS", text);
-        return { sent: true, threadID };
+        return { sent: true, threadId };
       },
     }),
   };
+}
+
+/**
+ * What the reviewer reads on the card.
+ *
+ * The target leads, because the agent can now reply to a thread it discovered rather than only the
+ * one it was handed, and picking the wrong customer is the mistake worth catching here.
+ */
+export function cardText(
+  target: { id: string; title: string; customerName: string },
+  message: string,
+): string {
+  return truncate(
+    `Send this reply to ${target.customerName} on "${target.title}" (${target.id}):\n\n${message}`,
+    4000,
+  );
 }
 
 /**

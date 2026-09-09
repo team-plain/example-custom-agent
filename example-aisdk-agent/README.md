@@ -10,7 +10,8 @@ For the other shape see the [repo README](../README.md). The protocol is documen
 
 ## How it works
 
-A teammate opens Ask Sidekick on a customer's thread and asks the agent to handle it.
+A teammate opens Ask Sidekick and asks the agent to handle a customer. The discussion may be
+attached to their thread, or to nothing at all.
 
 ```
                        discussion.message_created
@@ -18,12 +19,11 @@ A teammate opens Ask Sidekick on a customer's thread and asks the agent to handl
                                                             │
                                                        src/agent.ts
                                                             │
-                    ┌───────────────────────────────────────┼───────────────────────┐
-                    │                    │                                         │
-           read_customer_thread    search_knowledge                        reply_to_customer
-           threadAsText()          searchKnowledgeSources()                APPROVAL, then
-                    │                    │                                 replyToThread()
-                    └────────────────────┴─────────────────────────────────────────┘
+     ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+ list_thread_queue  search_threads  read_customer_thread  search_knowledge  reply_to_customer
+ threads()          searchThreads() threadAsText()   searchKnowledgeSources() APPROVAL, then
+     │                  │                  │                  │            replyToThread()
+     └──────────────────┴──────────────────┴──────────────────┴──────────────────┘
                                          │
                               upsertDiscussionToolCall
                               PENDING before, settled after
@@ -35,7 +35,7 @@ nothing about Plain. Everything Plain-specific is in `src/agent.ts` and `src/pla
 | File | What it holds |
 | --- | --- |
 | `src/serve.ts` | the webhook server, signature check, and which deliveries to act on |
-| `src/agent.ts` | the three tools, the approval wait, and the turn |
+| `src/agent.ts` | the five tools, the reachable-thread set, the approval wait, and the turn |
 | `src/plain.ts` | every Plain query and mutation |
 | `src/core.ts` | the model call, and nothing else |
 | `prompts/agent.md` | the system prompt, read fresh on startup |
@@ -78,6 +78,8 @@ bun run serve
 ```
 
 Then open a thread in Plain, click Ask Sidekick, pick your agent, and ask it to answer the customer.
+Or open Ask Sidekick on nothing and ask it what is in the queue: it will search and find its own way
+to a thread.
 
 **Run `check` before your first turn and read the knowledge line.** An agent with nothing indexed
 searches successfully and finds nothing, which looks like a broken agent rather than an empty help
@@ -87,6 +89,10 @@ The server logs every delivery and says what it skipped and why. An earlier vers
 deliveries in silence, and a turn that ran perfectly looked identical to one that never started.
 
 ## The tools
+
+**`list_thread_queue`** and **`search_threads`** find a thread the discussion was not opened on.
+Plain does not always attach one, and without these a threadless Sidekick session has nothing to
+work with. Every id they return becomes reachable for the rest of the turn.
 
 **`read_customer_thread`** paginates `timelineEntries` and concatenates `llmText`, which is Plain's
 own rendering of a timeline entry for a language model. Entries with nothing to render come back
@@ -110,7 +116,12 @@ Both reads report themselves on the discussion timeline: `PENDING` before the wo
 There is no environment variable to switch the gate off, on purpose. Everything else the agent does
 is a read.
 
-The card carries the full draft, not a summary, because nobody can approve a reply they cannot
+The card leads with **who receives the reply and on which thread**, then the full draft. That order
+is deliberate: the agent can reply to a thread it found in the queue, so the wrong customer is now a
+possible mistake and the card is where it gets caught. `cardText` is the one function that decides
+this, and a test pins the ordering.
+
+The draft goes on in full rather than as a summary, because nobody can approve a reply they cannot
 read. A denial comes back to the model with the reviewer's note attached, and the tool result says
 in words that a person declined and not to resend the same text. That phrasing is load-bearing: an
 earlier version returned a bare `sent: false`, and the model read it as a system fault and
@@ -124,14 +135,22 @@ attempting it: an unchecked failure there crashed the whole turn.
 If nobody decides within five minutes the agent stops waiting, fails the call so it stops reading
 as still running, and leaves the card open, because only a person can close it.
 
-## Where the thread id comes from
+## Which threads a turn may touch
 
-`serve.ts` reads `discussion.threadId` off the webhook payload and hands it to the tools in the
-closure that builds them. The model never sees it and cannot influence it.
+`serve.ts` reads `discussion.threadId` off the webhook payload, and `agentTools` seeds a per-turn
+`Set` with it. `list_thread_queue` and `search_threads` add every id they return. `read_customer_thread`
+and `reply_to_customer` refuse anything not in that set.
 
-`threadId` is nullable. A discussion opened on nothing has no customer to read or reply to, so the
-prompt says that up front rather than letting the model call a tool that cannot work and then
-apologise for it.
+The set exists because the queue tools changed what a thread id is. It used to arrive only from a
+webhook, in a closure the model could not reach. Now the model types one back, so it is model
+output, and a thread id sitting in text the agent read is not authority to act on it.
+
+**Per turn, not per process.** The set is built inside `agentTools`, so it dies when the turn does
+and what one discussion discovered is not another's to act on. `example-eve-agent` cannot do this,
+because an eve tool is a standalone file with no turn context, and its README says so.
+
+`threadId` is nullable. A discussion opened on nothing is not a dead end any more: the prompt points
+the model at the queue instead.
 
 ## Webhook version, the one setting that silently wastes an afternoon
 
@@ -173,8 +192,9 @@ wrong product, which is a long way from looking like a credential problem.
 ## What has been verified, and what has not
 
 Against a live workspace: the machine user identity, the event list, the knowledge search returning
-real articles, reading a real customer thread, and a full model turn that read the thread, searched
-the help center, grounded its answer in an article and chose to call `reply_to_customer`.
+real articles, the queue and thread search, and a full model turn on a **threadless** discussion
+that searched the queue, found the right thread, read it, searched the help center, grounded its
+answer in an article, and produced a card naming the customer by name.
 
 What has not run is a webhook-driven turn, because that needs a person to open Ask Sidekick: a
 discussion of type `AGENT_SESSION` cannot be created through the API at all, and a message the

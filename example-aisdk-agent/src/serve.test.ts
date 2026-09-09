@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DiscussionPayload } from "./serve.ts";
 import { shouldAnswerDiscussion, threadIDOf } from "./serve.ts";
-import { promptWithContext } from "./agent.ts";
+import { cardText, promptWithContext } from "./agent.ts";
 
 const ME = "mu_agent";
 
@@ -80,9 +80,29 @@ describe("telling the model where it is", () => {
     expect(prompt).toContain("answer this");
   });
 
-  // Said up front so the model does not call a tool that cannot work and then apologise for it.
-  test("says so plainly when there is not", () => {
+  // A threadless session is not a dead one any more: it is pointed at the queue instead.
+  test("points at the queue when there is not", () => {
     const prompt = promptWithContext("answer this", { discussionID: "disc_1", threadID: null });
     expect(prompt).toContain("not attached to a customer thread");
+    expect(prompt).toContain("list_thread_queue");
+  });
+});
+
+describe("the approval card", () => {
+  const target = { id: "th_9", title: "Cannot log in", customerName: "Ada Byron" };
+
+  // The agent can now reply to a thread it discovered, so approving a reply aimed at the wrong
+  // customer is the mistake the card exists to catch. Name leads, then the thread, then the draft.
+  test("leads with who receives the reply and on which thread", () => {
+    const card = cardText(target, "Try resetting your password.");
+    expect(card).toContain("Ada Byron");
+    expect(card).toContain("Cannot log in");
+    expect(card).toContain("th_9");
+    expect(card.indexOf("Ada Byron")).toBeLessThan(card.indexOf("Try resetting"));
+  });
+
+  test("carries the whole draft, not a summary", () => {
+    const draft = "Here is a very specific answer with steps.";
+    expect(cardText(target, draft)).toContain(draft);
   });
 });

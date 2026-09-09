@@ -10,7 +10,7 @@ and a model loop you do not have to write. For the other shape see the
 
 ## How it works
 
-A teammate opens Ask Sidekick on a customer's thread and asks the agent to handle it.
+A teammate opens Ask Sidekick and asks the agent to handle a customer.
 
 ```
 ┌─────────────────────┐  discussion.message_created  ┌──────────────────────────────┐
@@ -22,10 +22,13 @@ A teammate opens Ask Sidekick on a customer's thread and asks the agent to handl
                                                           one eve session
                                                           per discussion
                                                                      │
-                        ┌────────────────────────────┬───────────────┴────────────┐
-                 read_customer_thread         search_knowledge            reply_to_customer
-                                                                          approval: always()
+          ┌──────────────────┬──────────────────┬──────────────────┬──────────────────┐
+     list_thread_queue  search_threads  read_customer_thread  search_knowledge  reply_to_customer
+                                                                              approval: always()
 ```
+
+The discussion may be attached to a customer thread or to nothing at all. The queue tools are what
+make the second case useful rather than a dead end.
 
 `from(discussion.id).send()` is the whole mapping between a Plain discussion and an eve session. eve
 creates the session on the first message and resumes it on every later one, so this package has no
@@ -144,6 +147,10 @@ The system prompt is `agent/instructions.md`.
 
 One file each under `agent/tools/`, and the filename is the name the model sees.
 
+**`list_thread_queue`** and **`search_threads`** find a thread the discussion was not opened on.
+Both are async generators, so the first `yield` shows the search running on Plain's timeline. Every
+id they return becomes reachable, which is the widening that makes the guard below necessary.
+
 **`search_knowledge`** calls `searchKnowledgeSources`, so Plain does the retrieval and this package
 ships no vector store. It is an async generator: the first `yield` reaches the channel as an
 `action.partial`, so Plain's timeline shows the search running instead of jumping from `PENDING`
@@ -169,12 +176,15 @@ discussion it is running for. The thread id therefore travels through the prompt
 `discussion.threadId` off the webhook and `promptWithThread` puts it in the message.
 
 Which means the id comes back as **model output**. So `read_customer_thread` and
-`reply_to_customer` both check it against `isKnownThread`, a set of the ids a webhook has actually
-delivered to this process. Without that check, a prompt injected into a customer's thread could
-name any thread id and have the agent read it or reply on it.
+`reply_to_customer` both check it against `isKnownThread`, the set of ids that a webhook delivered
+or a queue tool returned. Without that check, a prompt injected into a customer's thread could name
+any thread id and have the agent read it or reply on it.
 
-The AI SDK package builds its tools per turn with the id in a closure, so the id is never in the
-model's hands. Neither approach is wrong. eve trades that for tools that are independent files.
+**The set is process-wide, and that is weaker than it should be.** The AI SDK package builds its
+tools per turn and scopes the same set to that turn, so what one discussion discovered cannot be
+acted on by another. eve cannot express that here, because a tool is a standalone file with no turn
+context. It is the price eve charges for tools that are just files, and worth knowing before you
+copy this shape into something with more than one customer's data in it.
 
 ## Approving the reply
 
@@ -194,6 +204,12 @@ The two protocols line up almost exactly, which is what makes this a good place 
 `requestId` is the only thing joining the two sides, which is why the channel records the Plain
 `toolCallId` against it when the request arrives. The approval options eve offers are `approve` and
 `cancel`.
+
+**The card leads with who receives the reply and on which thread.** eve's own prompt is generic
+("Approve tool call: reply_to_customer"), so the channel's `justify` looks the thread up and writes
+the customer's name, the thread title and the id above the draft. Since the agent can reply to a
+thread it found in the queue, the wrong customer is a real possible mistake and this is where it
+gets caught. A failed lookup falls back to the id rather than blocking the gate.
 
 Two things about this that are easy to get wrong, and both were:
 
@@ -249,10 +265,11 @@ and pass its model object in `agent/agent.ts` instead of the string.
 
 ## What has been verified, and what has not
 
-Against a live workspace, through `eve invoke`: the eve runtime, Haiku through the gateway, and
-`search_knowledge` returning real help center articles and grounding a precise answer in one,
-citing its article id. The build and 31 unit tests pass, and the channel module has a test that
-imports it for real.
+Against a live workspace, through `eve invoke`: the eve runtime, Haiku through the gateway,
+`search_knowledge` returning real help center articles and grounding a precise answer in one, and a
+full **threadless** run that searched the queue, found the right thread, read it and drafted a
+grounded reply. The reachable-thread guard was checked with an invented id and refused it verbatim.
+The build and 35 unit tests pass, and the channel module has a test that imports it for real.
 
 What has not run is a live webhook driving the channel end to end, so no real
 `discussion.message_created` has arrived and no approval has been seen through to approved or

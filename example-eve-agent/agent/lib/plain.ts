@@ -11,6 +11,20 @@ const TIMELINE_PAGE = 50;
 export type AgentStatus = "IN_PROGRESS" | "IDLE";
 export type ToolCallStatus = "PENDING" | "SUCCESS" | "ERROR";
 
+export type ThreadStatus = "TODO" | "SNOOZED" | "DONE";
+
+/** Enough about a thread to list it. What the queue and search return cheaply. */
+export type ThreadSummary = { id: string; title: string; status: string };
+
+/**
+ * One thread, plus who the customer is.
+ *
+ * Separate from the summary because the name costs a second query: the SDK returns `customer`
+ * lazily on a thread and as an id alone on a search hit. It is only needed on an approval card,
+ * where a reviewer has to see who receives the reply rather than just a thread id.
+ */
+export type ThreadTarget = ThreadSummary & { customerName: string };
+
 /** One hit from the workspace's indexed knowledge, already trimmed for a prompt. */
 export type KnowledgeHit = {
   /** A help center article id, or a document URL if you widen the search. Cite it in the answer. */
@@ -85,6 +99,49 @@ export class Plain {
           ? result.helpCenterArticle.id
           : result.indexedDocument.url,
       content: result.content,
+    }));
+  }
+
+  /** One thread with its customer's name, for naming a reply's target on the approval card. */
+  async threadTarget(threadID: string): Promise<ThreadTarget> {
+    const thread = await this.timeout(this.sdk.query.thread({ threadId: threadID }));
+    if (thread === null) throw new Error(`thread ${threadID} not found`);
+
+    const customer = await this.timeout(Promise.resolve(thread.customer));
+    return {
+      id: thread.id,
+      title: thread.title,
+      status: String(thread.status),
+      customerName: customer?.fullName ?? "unknown customer",
+    };
+  }
+
+  /**
+   * The support queue. `TODO` is what "in the queue" means.
+   *
+   * This is what makes a Sidekick session useful when it was opened on nothing: without it the
+   * agent knows only the one thread it was handed, or none at all.
+   */
+  async listThreadQueue(status: ThreadStatus, limit: number): Promise<ThreadSummary[]> {
+    const page = await this.timeout(
+      this.sdk.query.threads({ filters: { statuses: [status] }, first: limit }),
+    );
+    return page.nodes.map((thread) => ({
+      id: thread.id,
+      title: thread.title,
+      status: String(thread.status),
+    }));
+  }
+
+  /** Full-text search across threads, for finding one by what it is about. */
+  async searchThreads(query: string, limit: number): Promise<ThreadSummary[]> {
+    const result = await this.timeout(
+      this.sdk.query.searchThreads({ searchQuery: { term: query }, first: limit }),
+    );
+    return result.edges.map((edge) => ({
+      id: edge.node.thread.id,
+      title: edge.node.thread.title,
+      status: String(edge.node.thread.status),
     }));
   }
 
