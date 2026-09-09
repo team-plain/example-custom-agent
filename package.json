@@ -1,5 +1,5 @@
 {
-  "name": "example-custom-agent",
+  "name": "example-internal-agents",
   "private": true,
   "workspaces": [
     "example-aisdk-agent"
