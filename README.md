@@ -17,3 +17,5 @@ Both agents are built with several tools on top of Plain's API:
  - Listing and reading thread details
  - Searching through your knowledge sources in Plain
  - Reply to customer threads (gated behind human approval)
+
+To interact with the custom agents, you can start a new "Ask Sidekick" conversation in Plain and pick your custom agents. See [What you need to setup in Plain](https://plain-docs-orca-916-agent-docs-restructure.mintlify.site/agents/internal-agent#what-you-need-in-plain) for setup guidance.
