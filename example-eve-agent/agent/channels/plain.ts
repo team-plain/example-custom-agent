@@ -26,6 +26,20 @@ const APPROVAL_RESOLVED = "discussion.tool_call_approval_resolved";
 const seen = new SeenDeliveries();
 
 /**
+ * Each tool call's timeline line, by callId.
+ *
+ * A call is written twice, PENDING then settled, and only the first write knows the arguments.
+ * Bounded and cleared on settle, so a long-lived process does not grow it forever.
+ */
+const rowText = new Map<string, string>();
+const ROW_LIMIT = 500;
+
+function rememberRow(callID: string, text: string): void {
+  if (rowText.size >= ROW_LIMIT) rowText.clear();
+  rowText.set(callID, text);
+}
+
+/**
  * Approval key to eve requestId, for calls parked on a person.
  *
  * Module-level for the same reason as `seen`: the approval webhook arrives outside any session.
@@ -91,7 +105,9 @@ export default defineChannel({
       const discussionID = discussionOf(channel);
       for (const action of event.actions) {
         if (action.kind !== "tool-call") continue;
-        await note(discussionID, action.callId, "PENDING", describe(action));
+        const text = describe(action);
+        rememberRow(action.callId, text);
+        await note(discussionID, action.callId, "PENDING", text);
       }
     },
 
@@ -107,7 +123,12 @@ export default defineChannel({
         gated.set(approvalKey(discussionID, toolCallID), request.requestId);
         awaitingApproval.opened(discussionID);
 
-        await plain().upsertToolCall(discussionID, toolCallID, "PENDING", describe(request.action));
+        const reply = replyInput(request.action);
+        const text =
+          reply === null ? describe(request.action) : await describeReply(reply.threadId);
+        rememberRow(toolCallID, text);
+
+        await plain().upsertToolCall(discussionID, toolCallID, "PENDING", text);
         await plain().requestApproval(discussionID, toolCallID, await justify(request));
       }
     },
@@ -125,9 +146,12 @@ export default defineChannel({
         discussionOf(channel),
         callID,
         failed ? "ERROR" : "SUCCESS",
-        describeResult(event.result),
+        // The line the row already had. Replacing it with the serialised result put a whole page of
+        // JSON on a timeline a support team reads.
+        rowText.get(callID) ?? "the tool call finished",
         failed ? (errorTextOf(event.error) ?? "the tool call failed") : undefined,
       );
+      rowText.delete(callID);
     },
 
     // Only terminal output reaches Plain. A message finishing on "tool-calls" is interim narration
@@ -280,23 +304,9 @@ async function justify(request: {
     return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
   }
 
-  // The target leads, because the agent can reply to a thread it found in the queue rather than
-  // only the one it was handed. Approving a reply aimed at the wrong customer is the mistake here.
-  try {
-    const target = await plain().threadTarget(reply.threadId);
-    // The link, not the id, when there is one: a reviewer who wants to check the thread should be
-    // one click away rather than pasting an id into a search box.
-    const where = target.url ?? target.id;
-    // Plain renders this as one paragraph, so the link sat between the recipient and the draft and
-    // broke the sentence in half. It goes last instead.
-    return truncate(
-      `Send to ${target.customerName} on "${target.title}"\n\n${reply.message}\n\nThread: ${where}`,
-      4000,
-    );
-  } catch {
-    // A failed lookup must not block the gate. The id alone is worse than a name, not useless.
-    return truncate(`Send this reply on thread ${reply.threadId}:\n\n${reply.message}`, 4000);
-  }
+  // The draft alone. `describeReply` puts the recipient and the thread title on the row directly
+  // beneath this, so a preamble and a thread URL here only pushed the reply off the screen.
+  return truncate(reply.message.trim(), 4000);
 }
 
 // Narrows the tool input rather than trusting it: `input` is typed unknown at the channel edge.
@@ -312,16 +322,51 @@ function replyInput(action: {
   return { threadId, message };
 }
 
-function describe(action: { toolName: string; input: unknown }): string {
-  // A reply's own text is the card's justification. Dumping the raw input here as well put the
-  // whole draft on the timeline row too, once in full and once truncated.
-  const reply = replyInput(action);
-  if (reply !== null) return `${action.toolName}(thread ${reply.threadId})`;
-  return truncate(`${action.toolName}(${JSON.stringify(action.input)})`, 2000);
+/**
+ * The one line Plain puts on the timeline. There is no separate title field, so this string is the
+ * whole row, and a support team reads it.
+ *
+ * Written per tool: `search_knowledge({"query":"..."})` is the shape of the call, not what it did.
+ */
+export function describe(action: { toolName: string; input: unknown }): string {
+  const field = (key: string): string | null => {
+    const input = action.input;
+    if (input === null || typeof input !== "object") return null;
+    const value = (input as Record<string, unknown>)[key];
+    return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+  };
+
+  switch (action.toolName) {
+    case "list_thread_queue":
+      return `listed the ${field("status") ?? "TODO"} queue`;
+    case "search_threads":
+      return `searched threads for "${field("query") ?? ""}"`;
+    case "read_customer_thread":
+      return `read thread ${field("threadId") ?? "an unnamed thread"}`;
+    case "search_knowledge":
+      return `searched the knowledge base for "${field("query") ?? ""}"`;
+    // Without the draft: it is on the approval card beside this row, and naming it twice showed
+    // the reviewer the same reply again, cut off mid-sentence.
+    case "reply_to_customer":
+      return `Reply to the customer on thread ${field("threadId") ?? "an unnamed thread"}`;
+    default:
+      return truncate(`${action.toolName}(${JSON.stringify(action.input)})`, 2000);
+  }
 }
 
-function describeResult(result: unknown): string {
-  return truncate(`returned ${JSON.stringify(result)}`, 2000);
+/**
+ * The same row once the recipient is known, which needs a Plain lookup so it cannot be sync.
+ *
+ * Approving a reply aimed at the wrong customer is the mistake the row and the card both exist to
+ * catch, so the name and the thread title belong here rather than an id.
+ */
+async function describeReply(threadID: string): Promise<string> {
+  try {
+    const target = await plain().threadTarget(threadID);
+    return `Reply to ${target.customerName} on "${target.title}"`;
+  } catch {
+    return `Reply to the customer on thread ${threadID}`;
+  }
 }
 
 function truncate(s: string, n: number): string {

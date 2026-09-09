@@ -325,7 +325,7 @@ function agentTools(plain: Plain, context: TurnContext, requested: Set<string>):
         // Always gated, with no switch to turn it off. Everything else here is a read; this is the
         // one call a customer sees, so it is the one call a person decides.
         const decision = await waitForApproval(plain, context.discussionID, toolCallID, text, {
-          justification: cardText(target, message),
+          justification: cardText(message),
         });
         if (decision.denied) {
           return {
@@ -354,24 +354,13 @@ function agentTools(plain: Plain, context: TurnContext, requested: Set<string>):
 }
 
 /**
- * What the reviewer reads on the card.
+ * What the reviewer reads on the card: the draft, and nothing around it.
  *
- * The target leads, because the agent can now reply to a thread it discovered rather than only the
- * one it was handed, and picking the wrong customer is the mistake worth catching here.
+ * The tool-call row sits directly beneath this naming the recipient and the thread, so a "Send to X
+ * on Y" preamble and a full thread URL here only pushed the reply itself off the screen.
  */
-export function cardText(
-  target: { id: string; title: string; customerName: string; url?: string | null },
-  message: string,
-): string {
-  // The link, not the id, when there is one: a reviewer who wants to check the thread should be one
-  // click away rather than pasting an id into a search box.
-  const where = target.url ?? target.id;
-  // Plain renders this as one paragraph, so the link sat between the recipient and the draft and
-  // broke the sentence in half. It goes last instead.
-  return truncate(
-    `Send to ${target.customerName} on "${target.title}"\n\n${message}\n\nThread: ${where}`,
-    4000,
-  );
+export function cardText(message: string): string {
+  return truncate(message.trim(), 4000);
 }
 
 /**

@@ -89,41 +89,16 @@ describe("telling the model where it is", () => {
 });
 
 describe("the approval card", () => {
-  const target = { id: "th_9", title: "Cannot log in", customerName: "Ada Byron" };
-
-  // The agent can now reply to a thread it discovered, so approving a reply aimed at the wrong
-  // customer is the mistake the card exists to catch. Name leads, then the thread, then the draft.
-  test("leads with who receives the reply and on which thread", () => {
-    const card = cardText(target, "Try resetting your password.");
-    expect(card).toContain("Ada Byron");
-    expect(card).toContain("Cannot log in");
-    expect(card).toContain("th_9");
-    expect(card.indexOf("Ada Byron")).toBeLessThan(card.indexOf("Try resetting"));
-  });
-
-  // A reviewer checking the thread should be one click away, not pasting an id into a search box.
-  test("prefers the clickable link over the raw id", () => {
-    const card = cardText({ ...target, url: "https://app.plain.com/workspace/w_1/thread/th_9/" }, "hi");
-    expect(card).toContain("https://app.plain.com/workspace/w_1/thread/th_9/");
-  });
-
-  // The workspace id needs a scope some machine users lack, so the link can legitimately be null.
-  test("falls back to the id when there is no link", () => {
-    expect(cardText({ ...target, url: null }, "hi")).toContain("th_9");
+  // A "Send to X on Y" preamble and a thread URL pushed the draft itself off a narrow card, and
+  // both were already on the tool-call row rendered directly beneath it.
+  test("is the draft and nothing else", () => {
+    const draft = "Settings, then Integrations, then Connect Slack.";
+    expect(cardText(draft)).toBe(draft);
   });
 
   test("carries the whole draft, not a summary", () => {
-    const draft = "Here is a very specific answer with steps.";
-    expect(cardText(target, draft)).toContain(draft);
-  });
-
-  // Plain renders the card as one paragraph, so a link in the middle split the recipient line from
-  // the draft and the whole thing read as a run-on wall.
-  test("puts the link after the draft, not between it and the recipient", () => {
-    const draft = "Here is a very specific answer with steps.";
-    const url = "https://app.plain.com/workspace/w_1/thread/th_9/";
-    const card = cardText({ ...target, url }, draft);
-    expect(card.indexOf(draft)).toBeLessThan(card.indexOf(url));
+    const draft = "Here is a very specific answer with steps, and then some more of them.";
+    expect(cardText(draft)).toContain(draft);
   });
 });
 
