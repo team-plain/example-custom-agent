@@ -60,6 +60,9 @@ because it calls the model itself rather than driving a framework that brokers i
 
 3. Get a public https URL that reaches this process. Locally, `ngrok http 8082`.
 
+   Both packages serve `/plain/webhook` on port 8082, so one tunnel and one webhook target work for
+   either of them. Run one at a time: the second fails to bind.
+
 4. Create the webhook under
    [Settings → Webhooks → Add webhook target](https://app.plain.com/~/settings/webhooks/add/),
    pointed at `$PUBLIC_URL/plain/webhook` on version `2026-09-06`, subscribed to

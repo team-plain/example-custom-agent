@@ -107,8 +107,12 @@ files of it.
    [Settings → Request Signing](https://app.plain.com/~/settings/request-signing/), and
    `AI_GATEWAY_API_KEY`.
 
-3. Get a public https URL that reaches this process. Locally, `ngrok http <port>` against whatever
-   port `eve dev` prints.
+3. Get a public https URL that reaches this process. Locally, `ngrok http 8082`.
+
+   Both packages serve `/plain/webhook` on port 8082, so one tunnel and one webhook target work for
+   either of them. Run one at a time: the second fails with `EADDRINUSE`, which is why the scripts
+   pass `--host 0.0.0.0`. Bound to loopback instead, eve would start alongside the other agent and
+   quietly take its deliveries.
 
 4. Create the webhook under
    [Settings → Webhooks → Add webhook target](https://app.plain.com/~/settings/webhooks/add/).
@@ -136,8 +140,12 @@ before anything else.
 Then the real thing:
 
 ```
-npm run dev --no-workspaces
+npm run serve --no-workspaces
 ```
+
+Same script name and same port as the other package, which runs `bun run serve`. `npm run dev
+--no-workspaces` is the same server with eve's interactive UI in front of it, useful for talking to
+the agent directly and no use for reading webhook logs.
 
 Open a thread in Plain, click Ask Sidekick, pick your agent, and ask it to answer the customer.
 
