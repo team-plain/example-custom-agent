@@ -124,12 +124,15 @@ export default defineChannel({
         awaitingApproval.opened(discussionID);
 
         const reply = replyInput(request.action);
-        const text =
-          reply === null ? describe(request.action) : await describeReply(reply.threadId);
-        rememberRow(toolCallID, text);
+        // The draft goes in the row: Plain renders a call's row inside the card, and the
+        // justification above it as a heading. Recipient on top, reply in the box.
+        const row = reply === null ? describe(request.action) : truncate(reply.message.trim(), 4000);
+        const heading =
+          reply === null ? await justify(request) : await describeReply(reply.threadId);
+        rememberRow(toolCallID, row);
 
-        await plain().upsertToolCall(discussionID, toolCallID, "PENDING", text);
-        await plain().requestApproval(discussionID, toolCallID, await justify(request));
+        await plain().upsertToolCall(discussionID, toolCallID, "PENDING", row);
+        await plain().requestApproval(discussionID, toolCallID, heading);
       }
     },
 
@@ -299,14 +302,7 @@ async function justify(request: {
   prompt: string;
   action: { toolName: string; input: unknown };
 }): Promise<string> {
-  const reply = replyInput(request.action);
-  if (reply === null) {
-    return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
-  }
-
-  // The draft alone. `describeReply` puts the recipient and the thread title on the row directly
-  // beneath this, so a preamble and a thread URL here only pushed the reply off the screen.
-  return truncate(reply.message.trim(), 4000);
+  return truncate(`${request.prompt}\n\nArguments: ${JSON.stringify(request.action.input)}`, 4000);
 }
 
 // Narrows the tool input rather than trusting it: `input` is typed unknown at the channel edge.

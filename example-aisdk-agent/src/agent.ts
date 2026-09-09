@@ -317,15 +317,15 @@ function agentTools(plain: Plain, context: TurnContext, requested: Set<string>):
         const target = await plain.threadTarget(threadId);
 
         const toolCallID = `reply-to-customer-${Date.now()}`;
-        // Without the draft: the card's justification already carries it in full, and repeating it
-        // here showed the reviewer the same reply twice, the second copy cut off mid-sentence.
-        const text = `Reply to ${target.customerName} on "${target.title}"`;
+        // The draft is the row, and the row is what Plain renders inside the card. The
+        // justification sits above the box as a heading, so the recipient goes there.
+        const text = replyRow(message);
         await plain.upsertToolCall(context.discussionID, toolCallID, "PENDING", text);
 
         // Always gated, with no switch to turn it off. Everything else here is a read; this is the
         // one call a customer sees, so it is the one call a person decides.
         const decision = await waitForApproval(plain, context.discussionID, toolCallID, text, {
-          justification: cardText(message),
+          justification: replyHeading(target),
         });
         if (decision.denied) {
           return {
@@ -354,13 +354,23 @@ function agentTools(plain: Plain, context: TurnContext, requested: Set<string>):
 }
 
 /**
- * What the reviewer reads on the card: the draft, and nothing around it.
+ * The draft, shown in the box inside the approval card.
  *
- * The tool-call row sits directly beneath this naming the recipient and the thread, so a "Send to X
- * on Y" preamble and a full thread URL here only pushed the reply itself off the screen.
+ * Plain renders a call's row inside the card and the approval's justification above it, so the reply
+ * belongs here and the heading belongs in `replyHeading`.
  */
-export function cardText(message: string): string {
+export function replyRow(message: string): string {
   return truncate(message.trim(), 4000);
+}
+
+/**
+ * The line above the box: who receives this reply and on which thread.
+ *
+ * The agent can reply to a thread it discovered rather than only the one it was handed, so
+ * approving a reply aimed at the wrong customer is the mistake this line exists to catch.
+ */
+export function replyHeading(target: { title: string; customerName: string }): string {
+  return `Reply to ${target.customerName} on "${target.title}"`;
 }
 
 /**

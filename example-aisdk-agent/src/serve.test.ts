@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DiscussionPayload } from "./serve.ts";
 import { shouldAnswerDiscussion, threadIDOf, whyNotAnswering } from "./serve.ts";
-import { cardText, conversation, mayReplyTo, promptWithContext, threadIDsIn } from "./agent.ts";
+import { conversation, mayReplyTo, promptWithContext, replyHeading, replyRow, threadIDsIn } from "./agent.ts";
 
 const ME = "mu_agent";
 
@@ -89,16 +89,23 @@ describe("telling the model where it is", () => {
 });
 
 describe("the approval card", () => {
-  // A "Send to X on Y" preamble and a thread URL pushed the draft itself off a narrow card, and
-  // both were already on the tool-call row rendered directly beneath it.
-  test("is the draft and nothing else", () => {
+  // Plain renders a call's row inside the card and the approval's justification above it, so the
+  // draft goes in the row. A preamble and a thread URL there pushed the reply off a narrow card.
+  test("the box holds the draft and nothing else", () => {
     const draft = "Settings, then Integrations, then Connect Slack.";
-    expect(cardText(draft)).toBe(draft);
+    expect(replyRow(draft)).toBe(draft);
   });
 
-  test("carries the whole draft, not a summary", () => {
-    const draft = "Here is a very specific answer with steps, and then some more of them.";
-    expect(cardText(draft)).toContain(draft);
+  // The agent can reply to a thread it discovered, so approving a reply aimed at the wrong customer
+  // is the mistake this line exists to catch.
+  test("the heading names the recipient and the thread", () => {
+    const heading = replyHeading({ title: "Cannot log in", customerName: "Ada Byron" });
+    expect(heading).toBe('Reply to Ada Byron on "Cannot log in"');
+  });
+
+  test("the heading leaves the draft out", () => {
+    const heading = replyHeading({ title: "Cannot log in", customerName: "Ada Byron" });
+    expect(heading).not.toContain("Settings");
   });
 });
 
