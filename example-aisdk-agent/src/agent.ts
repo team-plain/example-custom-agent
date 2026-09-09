@@ -15,6 +15,14 @@ export type TurnContext = {
   discussionID: string;
   /** The thread the discussion was opened on, or null when it was opened on nothing. */
   threadID: string | null;
+  /**
+   * That thread's link, resolved once per turn.
+   *
+   * Here because the model invented one otherwise. Replying to the discussion's own thread calls no
+   * search tool, so it never saw a `url` field, and given only an id it produced
+   * `app.nairi.ai/threads/...` and `example.com`. A model with no link to hand will make one up.
+   */
+  threadURL?: string | null;
 };
 
 export type TurnOutcome = { answered: boolean; steps: number };
@@ -43,16 +51,26 @@ export async function handleDiscussion(
   prompt: string,
   context: TurnContext,
 ): Promise<TurnOutcome> {
-  await plain.setDiscussionAgentStatus(context.discussionID, "IN_PROGRESS");
+  // Not fatal, and not outside the try. Plain refuses a status while an approval card is open, and
+  // an unchecked throw here killed the whole turn before it started: no answer, no error the person
+  // could see. The answer matters more than the spinner.
+  await announce(plain, context.discussionID, "IN_PROGRESS");
 
   try {
+    // Resolved once, so the preamble can carry a real link rather than a bare id.
+    const withURL: TurnContext = {
+      ...context,
+      threadURL:
+        context.threadURL ??
+        (context.threadID === null ? null : await plain.threadURL(context.threadID)),
+    };
     // Read before the turn, so the model sees what was said earlier in this discussion. The newest
     // message is already in there, carrying the where-am-I preamble on top.
     const history = await plain.discussionHistory(context.discussionID, HISTORY_MESSAGES);
     const turn = await runTurn({
       system,
-      messages: conversation(history, prompt, context),
-      tools: agentTools(plain, context),
+      messages: conversation(history, prompt, withURL),
+      tools: agentTools(plain, withURL, threadIDsIn(prompt)),
     });
 
     const answer = turn.text === "" ? "I could not produce an answer for this." : turn.text;
@@ -71,9 +89,29 @@ export async function handleDiscussion(
     // Settles last, because posting the reply is what marks the discussion unread. Skipped while a
     // card is open: Plain refuses a status then, and an unchecked write crashes the whole turn.
     if (!approvalOpen.has(context.discussionID)) {
-      await plain.setDiscussionAgentStatus(context.discussionID, "IDLE");
+      await announce(plain, context.discussionID, "IDLE");
     }
     approvalOpen.delete(context.discussionID);
+  }
+}
+
+/**
+ * Reports the agent status, and carries on if Plain says no.
+ *
+ * The one refusal that matters: while an approval card is open Plain rejects any status with
+ * "agentStatus cannot be reported while an approval is open on this discussion". That is expected
+ * rather than broken, so it is logged and the turn continues.
+ */
+async function announce(
+  plain: Plain,
+  discussionID: string,
+  status: "IN_PROGRESS" | "IDLE",
+): Promise<void> {
+  try {
+    await plain.setDiscussionAgentStatus(discussionID, status);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.log(`   could not set ${status}: ${reason}`);
   }
 }
 
@@ -99,12 +137,59 @@ export function conversation(
 // Says up front where the agent is, so it does not reach for its own thread when there is none and
 // then apologise for it.
 export function promptWithContext(prompt: string, context: TurnContext): string {
-  const where =
-    context.threadID === null
-      ? "This discussion is not attached to a customer thread. Use list_thread_queue or " +
-        "search_threads to find the thread you need."
-      : `This discussion is attached to customer thread ${context.threadID}.`;
-  return `${where}\n\n${prompt}`;
+  if (context.threadID === null) {
+    return (
+      "This discussion is not attached to a customer thread. Use list_thread_queue or " +
+      `search_threads to find the thread you need.\n\n${prompt}`
+    );
+  }
+  // The link goes in whenever there is one, so the model never has to construct a URL.
+  const link = context.threadURL ? `\nIts link is ${context.threadURL}` : "";
+  return `This discussion is attached to customer thread ${context.threadID}.${link}\n\n${prompt}`;
+}
+
+/**
+ * Thread ids the colleague named in this request.
+ *
+ * Plain ids are prefixed and fixed-length, so this is exact rather than a guess.
+ */
+export function threadIDsIn(text: string): Set<string> {
+  return new Set(text.match(/\bth_[0-9A-Za-z]{20,32}\b/g) ?? []);
+}
+
+/**
+ * Whether a reply may target this thread.
+ *
+ * Two independent conditions. It has to be reachable, meaning a webhook or a search produced it.
+ * And if the colleague named any thread in the request, it has to be one of those.
+ *
+ * The second half is not a nicety. Told to reply to an id it could not use, the model listed the
+ * queue and replied to an unrelated customer instead, and no wording in the prompt reliably stopped
+ * it. Being handed a bad id is not permission to pick a different customer.
+ */
+export function mayReplyTo(
+  threadID: string,
+  reachable: Set<string>,
+  requested: Set<string>,
+): { ok: true } | { ok: false; reason: string } {
+  if (requested.size > 0 && !requested.has(threadID)) {
+    return {
+      ok: false,
+      reason:
+        `You were asked about ${[...requested].join(", ")}, so ${threadID} is not the thread to ` +
+        "reply on. Tell your colleague the id you were given cannot be used and stop. Do not " +
+        "reply to a different customer.",
+    };
+  }
+  if (!reachable.has(threadID)) {
+    return {
+      ok: false,
+      reason:
+        `${threadID} is not a thread this turn has seen. Use list_thread_queue or search_threads ` +
+        "first, then use an id from those results exactly as written.",
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -120,7 +205,7 @@ function reachableThreads(context: TurnContext): Set<string> {
   return reachable;
 }
 
-function agentTools(plain: Plain, context: TurnContext): ToolSet {
+function agentTools(plain: Plain, context: TurnContext, requested: Set<string>): ToolSet {
   const reachable = reachableThreads(context);
 
   const refuse = (threadID: string) => ({
@@ -180,11 +265,13 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
           .describe("This discussion's thread, or one from list_thread_queue or search_threads."),
       }),
       async execute({ threadId }) {
-        if (!reachable.has(threadId)) return refuse(threadId);
+        const allowed = mayReplyTo(threadId, reachable, requested);
+        if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
 
         return report(plain, context, `read thread ${threadId}`, async () => {
           const conversation = await plain.threadAsText(threadId);
-          return { read: true, threadId, conversation };
+          // The link travels with the content, so naming this thread later needs no invention.
+          return { read: true, threadId, url: await plain.threadURL(threadId), conversation };
         });
       },
     }),
@@ -217,7 +304,8 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
         message: z.string().min(1).describe("The reply, in markdown, addressed to the customer."),
       }),
       async execute({ threadId, message }) {
-        if (!reachable.has(threadId)) return refuse(threadId);
+        const allowed = mayReplyTo(threadId, reachable, requested);
+        if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
 
         // Resolved now rather than reused from a list, because the card has to name who receives
         // this. A reviewer approving a reply to the wrong customer is the failure to prevent.
@@ -251,7 +339,8 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
         }
 
         await plain.upsertToolCall(context.discussionID, toolCallID, "SUCCESS", text);
-        return { sent: true, threadId };
+        // The link comes back so the model can name the thread without building a URL.
+        return { sent: true, threadId, url: target.url };
       },
     }),
   };

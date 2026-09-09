@@ -15,8 +15,15 @@ export type ApprovalOutcome =
 
 /** One hit from the workspace's indexed knowledge, already trimmed for a prompt. */
 export type KnowledgeHit = {
-  /** A help center article id, or a document URL if you widen the search. Cite it in the answer. */
+  /** A help center article id, or a document URL if you widen the search. */
   source: string;
+  /**
+   * The article's own title, pulled off the front of the content.
+   *
+   * Surfaced as a field because a model given only an id will happily invent a URL to go with it.
+   * A title is something it can cite truthfully.
+   */
+  title: string;
   content: string;
 };
 
@@ -48,6 +55,13 @@ export type ThreadSummary = { id: string; title: string; status: string; url: st
 export type ThreadTarget = ThreadSummary & { customerName: string };
 
 type MutationError = { message: string; code: string } | null;
+
+// Plain puts the article title on the first line as "Title: ...". Cheaper than a second query.
+function titleOf(content: string): string {
+  const first = content.split("\n", 1)[0] ?? "";
+  const match = /^\s*Title:\s*(.+?)\s*$/.exec(first);
+  return match?.[1] ?? "untitled";
+}
 
 // Built once per list rather than per row, so a queue of ten is one workspace lookup, not ten.
 function linkTo(workspace: string | null, threadID: string): string | null {
@@ -153,6 +167,7 @@ export class Plain {
         result.__typename === "HelpCenterArticleSearchResult"
           ? result.helpCenterArticle.id
           : result.indexedDocument.url,
+      title: titleOf(result.content),
       content: result.content,
     }));
   }

@@ -28,18 +28,31 @@ function alreadyHandled(id: string): boolean {
 export type DiscussionPayload = DiscussionMessageCreatedPublicEventPayload;
 
 /**
- * The four conditions from the docs.
+ * The four conditions from the docs, and which one said no.
  *
- * Skip any one and the agent answers its own replies: its own messages come back as INBOUND, so
- * the message type check alone is what stops the loop.
+ * Null means answer it. A string is the reason, because "not this agent's turn" sent people
+ * hunting: a RESOLVED Sidekick session looks identical to a broken agent from the outside.
  */
+export function whyNotAnswering(payload: DiscussionPayload, myID: string): string | null {
+  if (payload.discussion.type !== "AGENT_SESSION") {
+    return `discussion type is ${payload.discussion.type}, not AGENT_SESSION`;
+  }
+  if (payload.discussion.agent?.id !== myID) {
+    return `discussion belongs to agent ${payload.discussion.agent?.id ?? "nobody"}, not ${myID}`;
+  }
+  // The loop guard. Its own replies come back as INBOUND, so without this it answers itself.
+  if (payload.message.type !== "OUTBOUND") {
+    return `message is ${payload.message.type}, so it is not a person's turn`;
+  }
+  if (payload.discussion.status === "RESOLVED") {
+    return "the discussion is RESOLVED, so start a new Ask Sidekick session to continue";
+  }
+  return null;
+}
+
+/** The four conditions as a boolean, for callers that do not need the reason. */
 export function shouldAnswerDiscussion(payload: DiscussionPayload, myID: string): boolean {
-  return (
-    payload.discussion.type === "AGENT_SESSION" &&
-    payload.discussion.agent?.id === myID &&
-    payload.message.type === "OUTBOUND" &&
-    payload.discussion.status !== "RESOLVED"
-  );
+  return whyNotAnswering(payload, myID) === null;
 }
 
 /** The customer thread the discussion was opened on, or null when it was opened on nothing. */
@@ -90,7 +103,8 @@ function dispatch(
   }
 
   const message = payload as unknown as DiscussionPayload;
-  if (!shouldAnswerDiscussion(message, myID)) return skip("not this agent's turn");
+  const why = whyNotAnswering(message, myID);
+  if (why !== null) return skip(why);
   if (alreadyHandled(message.message.id)) return skip("already handled");
 
   const text = (message.message.markdown ?? message.message.text ?? "").trim();

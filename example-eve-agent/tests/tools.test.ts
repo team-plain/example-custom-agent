@@ -6,7 +6,16 @@ import searchKnowledge from "../agent/tools/search_knowledge.ts";
 import readCustomerThread from "../agent/tools/read_customer_thread.ts";
 import listThreadQueue from "../agent/tools/list_thread_queue.ts";
 import searchThreads from "../agent/tools/search_threads.ts";
-import { forgetThreads, isKnownThread, refuseThread, rememberThread } from "../agent/lib/client.ts";
+import {
+  forgetRequestedThreads,
+  forgetThreads,
+  isKnownThread,
+  mayReplyTo,
+  refuseThread,
+  rememberRequestedThreads,
+  rememberThread,
+  threadIDsIn,
+} from "../agent/lib/client.ts";
 
 /**
  * The gate is one line of config, so a refactor can drop it and every other test still passes.
@@ -71,5 +80,46 @@ describe("the queue tools", () => {
 
   test("search_threads takes a query", () => {
     assert.deepEqual(inputKeys(searchThreads.inputSchema), ["query"]);
+  });
+});
+
+describe("pinning a reply to the thread that was named", () => {
+  const ID = "th_01M21192SC68S0SCVYQ11MN3VJ";
+  const OTHER = "th_01M22C3CMZKVXRJ1NKAHZ7WE81";
+
+  test("ids are picked out of the request", () => {
+    assert.deepEqual([...threadIDsIn(`reply to ${ID} please`)], [ID]);
+    assert.equal(threadIDsIn("reply to the SSO one").size, 0);
+  });
+
+  /**
+   * The failure this exists for. Told to reply to an id it could not use, the model listed the
+   * queue and replied to an unrelated customer, and no instruction wording stopped it reliably.
+   */
+  test("a different thread is refused when one was named", () => {
+    forgetThreads();
+    forgetRequestedThreads();
+    rememberThread(OTHER);
+    rememberRequestedThreads("please reply to th_01NOTAREALTHREADID0000000");
+    const result = mayReplyTo(OTHER);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.reason, /not the thread to reply on/);
+  });
+
+  test("the named thread is allowed when a webhook delivered it", () => {
+    forgetThreads();
+    forgetRequestedThreads();
+    rememberThread(ID);
+    rememberRequestedThreads(`reply to ${ID}`);
+    assert.equal(mayReplyTo(ID).ok, true);
+  });
+
+  // Naming nothing leaves reachability as the only gate, which is the queue-triage case.
+  test("with no id named, reachability alone decides", () => {
+    forgetThreads();
+    forgetRequestedThreads();
+    assert.equal(mayReplyTo(ID).ok, false);
+    rememberThread(ID);
+    assert.equal(mayReplyTo(ID).ok, true);
   });
 });

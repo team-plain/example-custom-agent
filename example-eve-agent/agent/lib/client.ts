@@ -88,3 +88,49 @@ export function refuseThread(threadID: string): { ok: false; reason: string } {
       "search_threads first, then use an id from those results exactly as written.",
   };
 }
+
+/**
+ * Thread ids the colleague named in the message that started this turn.
+ *
+ * Recorded by the channel, because the tool that needs it cannot see the prompt. Cleared and
+ * rewritten per delivery, so it always describes the request in hand.
+ */
+let requested = new Set<string>();
+
+export function rememberRequestedThreads(text: string): void {
+  requested = threadIDsIn(text);
+}
+
+/** Plain ids are prefixed and fixed-length, so this is exact rather than a guess. */
+export function threadIDsIn(text: string): Set<string> {
+  return new Set(text.match(/\bth_[0-9A-Za-z]{20,32}\b/g) ?? []);
+}
+
+/**
+ * Whether a reply may target this thread.
+ *
+ * Two independent conditions. It has to be reachable, meaning a webhook or a search produced it.
+ * And if the colleague named any thread in the request, it has to be one of those.
+ *
+ * The second half is not a nicety. Told to reply to an id it could not use, the model listed the
+ * queue and replied to an unrelated customer instead, and no wording in the instructions reliably
+ * stopped it. Being handed a bad id is not permission to pick a different customer.
+ */
+export function mayReplyTo(threadID: string): { ok: true } | { ok: false; reason: string } {
+  if (requested.size > 0 && !requested.has(threadID)) {
+    return {
+      ok: false,
+      reason:
+        `You were asked about ${[...requested].join(", ")}, so ${threadID} is not the thread to ` +
+        "reply on. Tell your colleague the id you were given cannot be used and stop. Do not " +
+        "reply to a different customer.",
+    };
+  }
+  if (!isKnownThread(threadID)) return refuseThread(threadID);
+  return { ok: true };
+}
+
+// Test seam, same reason as forgetThreads.
+export function forgetRequestedThreads(): void {
+  requested = new Set<string>();
+}

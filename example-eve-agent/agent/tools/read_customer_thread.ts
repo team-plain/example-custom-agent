@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { isKnownThread, plain, refuseThread } from "#lib/client.ts";
+import { mayReplyTo, plain } from "#lib/client.ts";
 
 export default defineTool({
   description:
@@ -13,10 +13,13 @@ export default defineTool({
       .describe("This discussion's thread, or one from list_thread_queue or search_threads."),
   }),
   async execute({ threadId }) {
-    // The id came through the prompt, so it is model output rather than trusted input.
-    if (!isKnownThread(threadId)) return refuseThread(threadId);
+    // The id came through the prompt, so it is model output rather than trusted input. The pin
+    // also refuses a thread other than the one the colleague named.
+    const allowed = mayReplyTo(threadId);
+    if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
 
     const conversation = await plain().threadAsText(threadId);
-    return { read: true, threadId, conversation };
+    // The link travels with the content, so naming this thread later needs no invention.
+    return { read: true, threadId, url: await plain().threadURL(threadId), conversation };
   },
 });

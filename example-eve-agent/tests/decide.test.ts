@@ -9,6 +9,7 @@ import {
   promptWithThread,
   shouldAnswer,
   threadIDOf,
+  whyNotAnswering,
   type MessageCreated,
 } from "../agent/lib/decide.ts";
 import { forgetThreads, isKnownThread, rememberThread } from "../agent/lib/client.ts";
@@ -187,5 +188,33 @@ describe("known threads", () => {
     forgetThreads();
     rememberThread("th_1");
     assert.equal(isKnownThread("th_made_up"), false);
+  });
+});
+
+describe("saying why a delivery was dropped", () => {
+  // Silence made a RESOLVED session look identical to a broken agent. Each refusal now names itself.
+  test("a resolved discussion says to start a new session", () => {
+    const why = whyNotAnswering(payload({ status: "RESOLVED" }), ME);
+    assert.match(String(why), /RESOLVED/);
+    assert.match(String(why), /new Ask Sidekick session/);
+  });
+
+  test("its own reply says the message is not a person's turn", () => {
+    assert.match(String(whyNotAnswering(payload({}, { type: "INBOUND" }), ME)), /INBOUND/);
+  });
+
+  test("another agent's discussion names the other agent", () => {
+    assert.match(String(whyNotAnswering(payload({ agent: { id: "mu_other" } }), ME)), /mu_other/);
+  });
+
+  test("null when there is nothing wrong", () => {
+    assert.equal(whyNotAnswering(payload(), ME), null);
+  });
+
+  // The boolean wrapper has to stay in step with the reason, or one of them is wrong.
+  test("shouldAnswer agrees with whyNotAnswering", () => {
+    for (const p of [payload(), payload({ status: "RESOLVED" }), payload({}, { type: "INBOUND" })]) {
+      assert.equal(shouldAnswer(p, ME), whyNotAnswering(p, ME) === null);
+    }
   });
 });

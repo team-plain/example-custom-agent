@@ -1,7 +1,7 @@
 import { defineChannel, POST } from "eve/channels";
 import { parseInputResponses } from "eve/client";
 import { verifyPlainWebhook } from "@team-plain/webhooks";
-import { plain, rememberThread } from "#lib/client.ts";
+import { plain, rememberRequestedThreads, rememberThread } from "#lib/client.ts";
 import {
   PendingApprovals,
   SeenDeliveries,
@@ -9,8 +9,8 @@ import {
   optionIDFor,
   promptFrom,
   promptWithThread,
-  shouldAnswer,
   threadIDOf,
+  whyNotAnswering,
   type ApprovalResolved,
   type MessageCreated,
 } from "#lib/decide.ts";
@@ -82,7 +82,7 @@ export default defineChannel({
 
   events: {
     async "turn.started"(_event, channel) {
-      await plain().setAgentStatus(discussionOf(channel), "IN_PROGRESS");
+      await announce(discussionOf(channel), "IN_PROGRESS");
     },
 
     // One line on the Plain timeline per call, before it runs. Correlated by callId because eve
@@ -91,7 +91,7 @@ export default defineChannel({
       const discussionID = discussionOf(channel);
       for (const action of event.actions) {
         if (action.kind !== "tool-call") continue;
-        await plain().upsertToolCall(discussionID, action.callId, "PENDING", describe(action));
+        await note(discussionID, action.callId, "PENDING", describe(action));
       }
     },
 
@@ -121,7 +121,7 @@ export default defineChannel({
       if (event.status === "rejected") return;
 
       const failed = event.status === "failed";
-      await plain().upsertToolCall(
+      await note(
         discussionOf(channel),
         callID,
         failed ? "ERROR" : "SUCCESS",
@@ -144,7 +144,7 @@ export default defineChannel({
     async "session.waiting"(_event, channel) {
       const discussionID = discussionOf(channel);
       if (!awaitingApproval.canSettleStatus(discussionID)) return;
-      await plain().setAgentStatus(discussionID, "IDLE");
+      await announce(discussionID, "IDLE");
     },
 
     async "turn.failed"(event, channel) {
@@ -157,6 +157,41 @@ export default defineChannel({
     },
   },
 });
+
+/**
+ * Reports the agent status, and carries on if Plain says no.
+ *
+ * The one refusal that matters: while an approval card is open Plain rejects any status with
+ * "agentStatus cannot be reported while an approval is open on this discussion". An unchecked
+ * throw in a channel event handler loses the turn over a spinner.
+ */
+async function announce(discussionID: string, status: "IN_PROGRESS" | "IDLE"): Promise<void> {
+  try {
+    await plain().setAgentStatus(discussionID, status);
+  } catch (err) {
+    console.log(`   could not set ${status}: ${errorTextOf(err) ?? String(err)}`);
+  }
+}
+
+/** Reports one tool call, and carries on. A missing timeline line is not worth failing a turn. */
+async function note(
+  discussionID: string,
+  toolCallID: string,
+  status: "PENDING" | "SUCCESS" | "ERROR",
+  text: string,
+  error?: string,
+): Promise<void> {
+  try {
+    await plain().upsertToolCall(discussionID, toolCallID, status, text, error);
+  } catch (err) {
+    console.log(`   could not report ${toolCallID}: ${errorTextOf(err) ?? String(err)}`);
+  }
+}
+
+// Says why a delivery was dropped. Silence is the worst answer when nothing appears to happen.
+function skip(why: string): void {
+  console.log(`   skipped: ${why}`);
+}
 
 /**
  * Answers the parked turn with the human's decision.
@@ -173,7 +208,7 @@ async function resumeApproval(payload: ApprovalResolved, from: ChannelFrom): Pro
   // rather than being cancelled on a status this code does not understand.
   const optionID = optionIDFor(payload.status);
   if (optionID === undefined) {
-    await plain().upsertToolCall(
+    await note(
       discussionID,
       payload.toolCallId,
       "ERROR",
@@ -200,19 +235,26 @@ async function startTurn(
   from: ChannelFrom,
   waitUntil: (work: Promise<unknown>) => void,
 ): Promise<void> {
-  if (!shouldAnswer(payload, await me())) return;
-  if (seen.check(payload.message.id)) return;
+  const why = whyNotAnswering(payload, await me());
+  if (why !== null) return skip(why);
+  if (seen.check(payload.message.id)) return skip("already handled");
 
   const text = promptFrom(payload);
-  if (text === "") return;
+  if (text === "") return skip("empty message");
 
   // Recorded before the turn starts, because a tool checks the id the model types back against it.
   const threadID = threadIDOf(payload);
   if (threadID !== null) rememberThread(threadID);
+  // Per delivery, so the pin always describes the request in hand rather than an older one.
+  rememberRequestedThreads(text);
 
   // from(discussion.id) creates the session on the first message and resumes it on later ones,
   // which is the whole discussion-to-session mapping.
-  waitUntil(from(payload.discussion.id).send(promptWithThread(text, threadID), { auth: null }));
+  // Resolved here rather than in a tool, so the preamble carries a real link the model can paste.
+  const threadURL = threadID === null ? null : await plain().threadURL(threadID).catch(() => null);
+  waitUntil(
+    from(payload.discussion.id).send(promptWithThread(text, threadID, threadURL), { auth: null }),
+  );
 }
 
 // The address a channel operation was bound to is the Plain discussion id, because that is the
@@ -331,7 +373,7 @@ async function reportFailure(discussionID: string, message: string): Promise<voi
   // Only a person can close an open card, so the status write is skipped rather than attempted:
   // Plain refuses it, and an unchecked failure here would bury the report just posted.
   if (awaitingApproval.canSettleStatus(discussionID)) {
-    await plain().setAgentStatus(discussionID, "IDLE");
+    await announce(discussionID, "IDLE");
   }
   awaitingApproval.settled(discussionID);
 }

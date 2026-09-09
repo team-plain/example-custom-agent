@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
-import { isKnownThread, plain, refuseThread } from "#lib/client.ts";
+import { mayReplyTo, plain } from "#lib/client.ts";
 
 /**
  * The one call a customer sees, so the one call a person decides.
@@ -20,10 +20,18 @@ export default defineTool({
   }),
   approval: always(),
   async execute({ threadId, message }) {
-    if (!isKnownThread(threadId)) return refuseThread(threadId);
+    const allowed = mayReplyTo(threadId);
+    if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
 
     await plain().replyToThread(threadId, message);
     const target = await plain().threadTarget(threadId);
-    return { sent: true, threadId, customerName: target.customerName, title: target.title };
+    // The link comes back so the model can name the thread without building a URL.
+    return {
+      sent: true,
+      threadId,
+      url: target.url,
+      customerName: target.customerName,
+      title: target.title,
+    };
   },
 });

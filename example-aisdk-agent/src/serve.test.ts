@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DiscussionPayload } from "./serve.ts";
-import { shouldAnswerDiscussion, threadIDOf } from "./serve.ts";
-import { cardText, conversation, promptWithContext } from "./agent.ts";
+import { shouldAnswerDiscussion, threadIDOf, whyNotAnswering } from "./serve.ts";
+import { cardText, conversation, mayReplyTo, promptWithContext, threadIDsIn } from "./agent.ts";
 
 const ME = "mu_agent";
 
@@ -170,5 +170,74 @@ describe("building the conversation", () => {
     expect(messages).toHaveLength(3);
     expect(messages[0]?.content).toBe("any update");
     expect(messages[1]?.content).toBe("not yet");
+  });
+});
+
+describe("saying why a delivery was dropped", () => {
+  // "not this agent's turn" sent people hunting for a broken agent. Each refusal now names itself.
+  test("a resolved discussion says to start a new session", () => {
+    const why = whyNotAnswering(delivery({ discussion: { status: "RESOLVED" } }), ME);
+    expect(why).toContain("RESOLVED");
+    expect(why).toContain("new Ask Sidekick session");
+  });
+
+  test("its own reply says the message is not a person's turn", () => {
+    expect(whyNotAnswering(delivery({ messageType: "INBOUND" }), ME)).toContain("INBOUND");
+  });
+
+  test("another agent's discussion names the other agent", () => {
+    const why = whyNotAnswering(delivery({ discussion: { agent: { id: "mu_other" } } }), ME);
+    expect(why).toContain("mu_other");
+  });
+
+  test("null when there is nothing wrong", () => {
+    expect(whyNotAnswering(delivery(), ME)).toBeNull();
+  });
+});
+
+describe("pinning a reply to the thread that was named", () => {
+  const ID = "th_01M21192SC68S0SCVYQ11MN3VJ";
+  const OTHER = "th_01M22C3CMZKVXRJ1NKAHZ7WE81";
+
+  test("ids are picked out of the request", () => {
+    expect([...threadIDsIn(`please reply to ${ID} today`)]).toEqual([ID]);
+    expect(threadIDsIn("reply to the SSO one").size).toBe(0);
+  });
+
+  /**
+   * The failure this exists for. Told to reply to an id it could not use, the model listed the
+   * queue and replied to an unrelated customer, and no prompt wording stopped it reliably.
+   */
+  test("a different thread is refused when one was named", () => {
+    const result = mayReplyTo(OTHER, new Set([OTHER]), new Set(["th_01NOTAREALTHREADID0000000"]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("not the thread to reply on");
+  });
+
+  test("the named thread is allowed when it is also reachable", () => {
+    expect(mayReplyTo(ID, new Set([ID]), new Set([ID])).ok).toBe(true);
+  });
+
+  // Naming nothing leaves the reachable set as the only gate, which is the queue-triage case.
+  test("with no id named, reachability alone decides", () => {
+    expect(mayReplyTo(ID, new Set([ID]), new Set()).ok).toBe(true);
+    expect(mayReplyTo(ID, new Set(), new Set()).ok).toBe(false);
+  });
+});
+
+describe("the thread link in the preamble", () => {
+  // Given only an id the model produced app.nairi.ai/threads/... and example.com. It needs a link.
+  test("the real link goes in when there is one", () => {
+    const prompt = promptWithContext("answer this", {
+      discussionID: "d", threadID: "th_1",
+      threadURL: "https://app.plain.com/workspace/w_1/thread/th_1/",
+    });
+    expect(prompt).toContain("https://app.plain.com/workspace/w_1/thread/th_1/");
+  });
+
+  test("no link is mentioned when there is none", () => {
+    const prompt = promptWithContext("answer this", { discussionID: "d", threadID: "th_1", threadURL: null });
+    expect(prompt).not.toContain("Its link is");
+    expect(prompt).toContain("th_1");
   });
 });
