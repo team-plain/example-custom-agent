@@ -7,6 +7,7 @@ import {
   SeenDeliveries,
   approvalKey,
   optionIDFor,
+  owedText,
   promptFrom,
   promptWithThread,
   threadIDOf,
@@ -47,6 +48,24 @@ function rememberRow(callID: string, text: string): void {
 const gated = new Map<string, string>();
 
 const awaitingApproval = new PendingApprovals();
+
+/**
+ * What each turn produced, so a turn cannot end in silence.
+ *
+ * A message finishing on "tool-calls" is narration and is not posted, but it is the only text there
+ * is when the model then ends the turn empty. That gave one discussion two tool rows, IDLE and no
+ * answer, with nothing on the timeline saying why.
+ */
+type TurnOutput = { posted: boolean; narration: string | null };
+const output = new Map<string, TurnOutput>();
+
+function outputFor(discussionID: string): TurnOutput {
+  const existing = output.get(discussionID);
+  if (existing !== undefined) return existing;
+  const fresh: TurnOutput = { posted: false, narration: null };
+  output.set(discussionID, fresh);
+  return fresh;
+}
 
 let machineUserID: Promise<string> | undefined;
 
@@ -96,7 +115,9 @@ export default defineChannel({
 
   events: {
     async "turn.started"(_event, channel) {
-      await announce(discussionOf(channel), "IN_PROGRESS");
+      const discussionID = discussionOf(channel);
+      output.set(discussionID, { posted: false, narration: null });
+      await announce(discussionID, "IN_PROGRESS");
     },
 
     // One line on the Plain timeline per call, before it runs. Correlated by callId because eve
@@ -158,19 +179,27 @@ export default defineChannel({
     },
 
     // Only terminal output reaches Plain. A message finishing on "tool-calls" is interim narration
-    // before the tool runs, and posting it would read as the answer.
+    // before the tool runs, and posting it would read as the answer. It is kept, not dropped:
+    // `settleSilence` falls back to it when the terminal message turns out to be empty.
     async "message.completed"(event, channel) {
-      if (finishReasonOf(event) === "tool-calls") return;
+      const discussionID = discussionOf(channel);
       const markdown = textOf(event.message);
+      const state = outputFor(discussionID);
+      if (markdown !== "") state.narration = markdown;
+
+      if (finishReasonOf(event) === "tool-calls") return;
       if (markdown === "") return;
-      await plain().sendMessage(discussionOf(channel), markdown);
+
+      if (await say(discussionID, markdown)) state.posted = true;
     },
 
     // eve emits this after `input.requested` while the card is still up, and Plain refuses IDLE
     // during a pending approval, so settling here would fail the whole turn.
     async "session.waiting"(_event, channel) {
       const discussionID = discussionOf(channel);
+      // Parked on a card: that card is the turn's output, and Plain refuses a status write anyway.
       if (!awaitingApproval.canSettleStatus(discussionID)) return;
+      await settleSilence(discussionID);
       await announce(discussionID, "IDLE");
     },
 
@@ -414,8 +443,40 @@ function callIDOf(result: unknown): string | undefined {
 }
 
 /** The failure is posted before the status settles, so the user reads what went wrong. */
+/**
+ * Posts to the discussion, and says so rather than throwing when it cannot.
+ *
+ * An unchecked post failure took the turn's status write down with it, so the discussion kept
+ * "thinking" over a turn that had already finished.
+ */
+async function say(discussionID: string, markdown: string): Promise<boolean> {
+  try {
+    await plain().sendMessage(discussionID, markdown);
+    return true;
+  } catch (err) {
+    console.log(`   could not post to ${discussionID}: ${errorTextOf(err) ?? String(err)}`);
+    return false;
+  }
+}
+
+/**
+ * Makes sure a finished turn said something.
+ *
+ * Narration is a worse answer than a real one and a far better answer than an empty discussion that
+ * gives nobody anything to debug.
+ */
+async function settleSilence(discussionID: string): Promise<void> {
+  const state = output.get(discussionID);
+  output.delete(discussionID);
+  if (state === undefined || state.posted) return;
+
+  const owed = owedText(state);
+  if (owed === null) return;
+  await say(discussionID, owed);
+}
+
 async function reportFailure(discussionID: string, message: string): Promise<void> {
-  await plain().sendMessage(discussionID, `The agent could not finish this turn.\n\n> ${message}`);
+  await say(discussionID, `The agent could not finish this turn.\n\n> ${message}`);
 
   // Only a person can close an open card, so the status write is skipped rather than attempted:
   // Plain refuses it, and an unchecked failure here would bury the report just posted.

@@ -1,10 +1,12 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  NOTHING_TO_SAY,
   PendingApprovals,
   SeenDeliveries,
   approvalKey,
   optionIDFor,
+  owedText,
   promptFrom,
   promptWithThread,
   shouldAnswer,
@@ -216,5 +218,22 @@ describe("saying why a delivery was dropped", () => {
     for (const p of [payload(), payload({ status: "RESOLVED" }), payload({}, { type: "INBOUND" })]) {
       assert.equal(shouldAnswer(p, ME), whyNotAnswering(p, ME) === null);
     }
+  });
+});
+
+// A turn that narrated, called its tools, then returned an empty final message posted nothing at
+// all: two tool rows, IDLE, no answer, and no hint on the timeline as to why.
+describe("what a finished turn still owes the discussion", () => {
+  test("nothing, once an answer has been posted", () => {
+    assert.equal(owedText({ posted: true, narration: "some narration" }), null);
+  });
+
+  test("the narration, when the terminal message came back empty", () => {
+    assert.equal(owedText({ posted: false, narration: "Found it in the Slack article." }),
+      "Found it in the Slack article.");
+  });
+
+  test("a plain statement, when the model produced no text at all", () => {
+    assert.equal(owedText({ posted: false, narration: null }), NOTHING_TO_SAY);
   });
 });
