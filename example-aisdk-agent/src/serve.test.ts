@@ -101,6 +101,17 @@ describe("the approval card", () => {
     expect(card.indexOf("Ada Byron")).toBeLessThan(card.indexOf("Try resetting"));
   });
 
+  // A reviewer checking the thread should be one click away, not pasting an id into a search box.
+  test("prefers the clickable link over the raw id", () => {
+    const card = cardText({ ...target, url: "https://app.plain.com/workspace/w_1/thread/th_9/" }, "hi");
+    expect(card).toContain("https://app.plain.com/workspace/w_1/thread/th_9/");
+  });
+
+  // The workspace id needs a scope some machine users lack, so the link can legitimately be null.
+  test("falls back to the id when there is no link", () => {
+    expect(cardText({ ...target, url: null }, "hi")).toContain("th_9");
+  });
+
   test("carries the whole draft, not a summary", () => {
     const draft = "Here is a very specific answer with steps.";
     expect(cardText(target, draft)).toContain(draft);

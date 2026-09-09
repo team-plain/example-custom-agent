@@ -94,6 +94,12 @@ deliveries in silence, and a turn that ran perfectly looked identical to one tha
 Plain does not always attach one, and without these a threadless Sidekick session has nothing to
 work with. Every id they return becomes reachable for the rest of the turn.
 
+Both return a **`url`** per thread, the real `app.plain.com/workspace/.../thread/.../` link, so the
+agent can hand a teammate something clickable instead of an id they have to paste into a search
+box. The workspace id behind it is looked up once and cached. That lookup needs a scope not every
+machine user has, so `url` can be null and `PLAIN_WORKSPACE_ID` skips the lookup entirely. A missing
+link is worth having; a failed turn is not.
+
 **`read_customer_thread`** paginates `timelineEntries` and concatenates `llmText`, which is Plain's
 own rendering of a timeline entry for a language model. Entries with nothing to render come back
 null and are skipped. That is the whole thread-reading strategy, and deliberately not a custom
@@ -116,7 +122,8 @@ Both reads report themselves on the discussion timeline: `PENDING` before the wo
 There is no environment variable to switch the gate off, on purpose. Everything else the agent does
 is a read.
 
-The card leads with **who receives the reply and on which thread**, then the full draft. That order
+The card leads with **who receives the reply and on which thread**, as a clickable link, then the
+full draft. That order
 is deliberate: the agent can reply to a thread it found in the queue, so the wrong customer is now a
 possible mistake and the card is where it gets caught. `cardText` is the one function that decides
 this, and a test pins the ordering.

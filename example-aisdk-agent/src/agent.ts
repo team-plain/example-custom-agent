@@ -264,11 +264,14 @@ function agentTools(plain: Plain, context: TurnContext): ToolSet {
  * one it was handed, and picking the wrong customer is the mistake worth catching here.
  */
 export function cardText(
-  target: { id: string; title: string; customerName: string },
+  target: { id: string; title: string; customerName: string; url?: string | null },
   message: string,
 ): string {
+  // The link, not the id, when there is one: a reviewer who wants to check the thread should be one
+  // click away rather than pasting an id into a search box.
+  const where = target.url ?? target.id;
   return truncate(
-    `Send this reply to ${target.customerName} on "${target.title}" (${target.id}):\n\n${message}`,
+    `Send this reply to ${target.customerName} on "${target.title}"\n${where}\n\n${message}`,
     4000,
   );
 }

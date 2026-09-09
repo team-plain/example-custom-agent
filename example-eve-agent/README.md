@@ -157,6 +157,11 @@ One file each under `agent/tools/`, and the filename is the name the model sees.
 Both are async generators, so the first `yield` shows the search running on Plain's timeline. Every
 id they return becomes reachable, which is the widening that makes the guard below necessary.
 
+Both return a **`url`** per thread, the real `app.plain.com/workspace/.../thread/.../` link, so the
+agent can hand a teammate something clickable. The workspace id is looked up once and cached; that
+lookup needs a scope not every machine user has, so `url` can be null and `PLAIN_WORKSPACE_ID`
+skips it.
+
 **`search_knowledge`** calls `searchKnowledgeSources`, so Plain does the retrieval and this package
 ships no vector store. It is an async generator: the first `yield` reaches the channel as an
 `action.partial`, so Plain's timeline shows the search running instead of jumping from `PENDING`

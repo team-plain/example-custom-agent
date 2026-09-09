@@ -25,7 +25,8 @@ reply_to_customer       a person approves, then it reaches the customer
 ```
 
 Every call lands on the discussion timeline as it happens, so the team watches the work instead of
-a spinner. The answer is grounded in the help center rather than in the model's memory, and the one
+a spinner. Thread results carry a real `app.plain.com` link, so the agent hands people something
+clickable rather than an id. The answer is grounded in the help center rather than in the model's memory, and the one
 call a customer ever sees is the one call a person decides.
 
 **A Sidekick session opened on nothing still works.** Plain does not always attach a thread, so the

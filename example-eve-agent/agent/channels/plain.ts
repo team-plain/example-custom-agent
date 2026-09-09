@@ -242,8 +242,11 @@ async function justify(request: {
   // only the one it was handed. Approving a reply aimed at the wrong customer is the mistake here.
   try {
     const target = await plain().threadTarget(reply.threadId);
+    // The link, not the id, when there is one: a reviewer who wants to check the thread should be
+    // one click away rather than pasting an id into a search box.
+    const where = target.url ?? target.id;
     return truncate(
-      `Send this reply to ${target.customerName} on "${target.title}" (${target.id}):\n\n${reply.message}`,
+      `Send this reply to ${target.customerName} on "${target.title}"\n${where}\n\n${reply.message}`,
       4000,
     );
   } catch {

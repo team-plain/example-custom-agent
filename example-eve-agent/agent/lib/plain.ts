@@ -13,8 +13,13 @@ export type ToolCallStatus = "PENDING" | "SUCCESS" | "ERROR";
 
 export type ThreadStatus = "TODO" | "SNOOZED" | "DONE";
 
-/** Enough about a thread to list it. What the queue and search return cheaply. */
-export type ThreadSummary = { id: string; title: string; status: string };
+/**
+ * Enough about a thread to list it, plus a link a person can click.
+ *
+ * `url` is null when the key cannot read the workspace id, which is a scope some machine users are
+ * not given. A missing link is worth having; a failed turn is not.
+ */
+export type ThreadSummary = { id: string; title: string; status: string; url: string | null };
 
 /**
  * One thread, plus who the customer is.
@@ -34,6 +39,11 @@ export type KnowledgeHit = {
 
 type MutationError = { message: string; code: string } | null;
 
+// Built once per list rather than per row, so a queue of ten is one workspace lookup, not ten.
+function linkTo(workspace: string | null, threadID: string): string | null {
+  return workspace === null ? null : `https://app.plain.com/workspace/${workspace}/thread/${threadID}/`;
+}
+
 /**
  * Every Plain call this example makes, both the channel's writes and the tools' reads.
  *
@@ -42,6 +52,8 @@ type MutationError = { message: string; code: string } | null;
  */
 export class Plain {
   private readonly sdk: PlainSDK;
+  // undefined means not looked up yet, null means the key cannot read it.
+  private workspace: string | null | undefined;
 
   constructor(apiKey: string, apiURL: string = PROD_API_URL) {
     this.sdk = new PlainSDK({ apiKey, apiUrl: apiURL });
@@ -51,6 +63,35 @@ export class Plain {
   async myMachineUserID(): Promise<string> {
     const me = await this.timeout(this.sdk.query.myMachineUser());
     return me.id;
+  }
+
+  /**
+   * The workspace id, for building links people can click. Looked up once and cached.
+   *
+   * Null rather than throwing: reading the workspace needs a scope not every machine user has, and
+   * losing the link is a far smaller problem than losing the turn. PLAIN_WORKSPACE_ID skips it.
+   */
+  async workspaceID(): Promise<string | null> {
+    if (this.workspace !== undefined) return this.workspace;
+
+    const configured = (process.env.PLAIN_WORKSPACE_ID ?? "").trim();
+    if (configured !== "") {
+      this.workspace = configured;
+      return this.workspace;
+    }
+
+    try {
+      const workspace = await this.timeout(this.sdk.query.myWorkspace());
+      this.workspace = workspace.id;
+    } catch {
+      this.workspace = null;
+    }
+    return this.workspace;
+  }
+
+  /** The link a person opens to read this thread in Plain. */
+  async threadURL(threadID: string): Promise<string | null> {
+    return linkTo(await this.workspaceID(), threadID);
   }
 
   /**
@@ -112,6 +153,7 @@ export class Plain {
       id: thread.id,
       title: thread.title,
       status: String(thread.status),
+      url: await this.threadURL(thread.id),
       customerName: customer?.fullName ?? "unknown customer",
     };
   }
@@ -126,10 +168,12 @@ export class Plain {
     const page = await this.timeout(
       this.sdk.query.threads({ filters: { statuses: [status] }, first: limit }),
     );
+    const workspace = await this.workspaceID();
     return page.nodes.map((thread) => ({
       id: thread.id,
       title: thread.title,
       status: String(thread.status),
+      url: linkTo(workspace, thread.id),
     }));
   }
 
@@ -138,10 +182,12 @@ export class Plain {
     const result = await this.timeout(
       this.sdk.query.searchThreads({ searchQuery: { term: query }, first: limit }),
     );
+    const workspace = await this.workspaceID();
     return result.edges.map((edge) => ({
       id: edge.node.thread.id,
       title: edge.node.thread.title,
       status: String(edge.node.thread.status),
+      url: linkTo(workspace, edge.node.thread.id),
     }));
   }
 
