@@ -317,7 +317,9 @@ function agentTools(plain: Plain, context: TurnContext, requested: Set<string>):
         const target = await plain.threadTarget(threadId);
 
         const toolCallID = `reply-to-customer-${Date.now()}`;
-        const text = `Reply to ${target.customerName} on "${target.title}": ${truncate(oneLine(message), 160)}`;
+        // Without the draft: the card's justification already carries it in full, and repeating it
+        // here showed the reviewer the same reply twice, the second copy cut off mid-sentence.
+        const text = `Reply to ${target.customerName} on "${target.title}"`;
         await plain.upsertToolCall(context.discussionID, toolCallID, "PENDING", text);
 
         // Always gated, with no switch to turn it off. Everything else here is a read; this is the
@@ -364,8 +366,10 @@ export function cardText(
   // The link, not the id, when there is one: a reviewer who wants to check the thread should be one
   // click away rather than pasting an id into a search box.
   const where = target.url ?? target.id;
+  // Plain renders this as one paragraph, so the link sat between the recipient and the draft and
+  // broke the sentence in half. It goes last instead.
   return truncate(
-    `Send this reply to ${target.customerName} on "${target.title}"\n${where}\n\n${message}`,
+    `Send to ${target.customerName} on "${target.title}"\n\n${message}\n\nThread: ${where}`,
     4000,
   );
 }

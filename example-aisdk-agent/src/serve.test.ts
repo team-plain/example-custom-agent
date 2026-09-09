@@ -116,6 +116,15 @@ describe("the approval card", () => {
     const draft = "Here is a very specific answer with steps.";
     expect(cardText(target, draft)).toContain(draft);
   });
+
+  // Plain renders the card as one paragraph, so a link in the middle split the recipient line from
+  // the draft and the whole thing read as a run-on wall.
+  test("puts the link after the draft, not between it and the recipient", () => {
+    const draft = "Here is a very specific answer with steps.";
+    const url = "https://app.plain.com/workspace/w_1/thread/th_9/";
+    const card = cardText({ ...target, url }, draft);
+    expect(card.indexOf(draft)).toBeLessThan(card.indexOf(url));
+  });
 });
 
 describe("building the conversation", () => {

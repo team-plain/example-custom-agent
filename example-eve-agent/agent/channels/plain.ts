@@ -287,8 +287,10 @@ async function justify(request: {
     // The link, not the id, when there is one: a reviewer who wants to check the thread should be
     // one click away rather than pasting an id into a search box.
     const where = target.url ?? target.id;
+    // Plain renders this as one paragraph, so the link sat between the recipient and the draft and
+    // broke the sentence in half. It goes last instead.
     return truncate(
-      `Send this reply to ${target.customerName} on "${target.title}"\n${where}\n\n${reply.message}`,
+      `Send to ${target.customerName} on "${target.title}"\n\n${reply.message}\n\nThread: ${where}`,
       4000,
     );
   } catch {
@@ -311,6 +313,10 @@ function replyInput(action: {
 }
 
 function describe(action: { toolName: string; input: unknown }): string {
+  // A reply's own text is the card's justification. Dumping the raw input here as well put the
+  // whole draft on the timeline row too, once in full and once truncated.
+  const reply = replyInput(action);
+  if (reply !== null) return `${action.toolName}(thread ${reply.threadId})`;
   return truncate(`${action.toolName}(${JSON.stringify(action.input)})`, 2000);
 }
 
