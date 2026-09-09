@@ -35,7 +35,7 @@ nothing about Plain. Everything Plain-specific is in `src/agent.ts` and `src/pla
 | File | What it holds |
 | --- | --- |
 | `src/serve.ts` | the webhook server, signature check, and which deliveries to act on |
-| `src/agent.ts` | the five tools, the reachable-thread set, the approval wait, and the turn |
+| `src/agent.ts` | the five tools, the reachable-thread set, the conversation, the approval wait |
 | `src/plain.ts` | every Plain query and mutation |
 | `src/core.ts` | the model call, and nothing else |
 | `prompts/agent.md` | the system prompt, read fresh on startup |
@@ -135,6 +135,34 @@ attempting it: an unchecked failure there crashed the whole turn.
 If nobody decides within five minutes the agent stops waiting, fails the call so it stops reading
 as still running, and leaves the card open, because only a person can close it.
 
+## The agent remembers the discussion
+
+`handleDiscussion` reads the discussion's own messages with `discussionHistory` and sends them to
+the model as a `messages` array. Plain is the conversation store, so this package keeps none.
+
+**It did not always.** An earlier version passed only the newest message as a single `prompt`
+string, and the failure was not subtle. Asked "give me a link to the thread" it listed the entire
+queue, because it had no idea a previous turn existed. Asked for "the one you replied to" it picked
+a different thread and opened an approval card nobody wanted. Nothing looked broken: each turn was
+individually reasonable, and the model filled the gap with a guess rather than saying it did not
+know.
+
+Two details that matter if you copy this:
+
+**Tool calls are filtered out.** A discussion's message list holds the agent's own
+`upsertDiscussionToolCall` and approval entries alongside real messages. Feeding those back reads as
+the model talking to itself, so `isMachinery` drops anything whose entry type mentions `ToolCall` or
+`Approval`. On a real conversation that cut 20 stored messages to the 5 that were actually said.
+
+**The newest message is already in the history**, because Plain stores it before the webhook fires.
+`conversation` drops the last entry when it matches, then re-adds it with the where-am-I preamble
+attached, so the preamble rides on the turn being answered rather than on something said an hour
+ago. It drops only the last entry, never by content: a person who asks the same question twice
+should not lose the first one.
+
+`OUTBOUND` becomes a `user` message and `INBOUND` becomes `assistant`, which reads backwards until
+you remember Plain is describing the discussion rather than the model.
+
 ## Which threads a turn may touch
 
 `serve.ts` reads `discussion.threadId` off the webhook payload, and `agentTools` seeds a per-turn
@@ -171,6 +199,9 @@ the discussion sits on "thinking" forever. Only your own log says why. Change bo
 Nothing here consumes a stream. The turn posts one finished message to Plain, so streaming would
 only add a buffer to collect the text back into a string. The progressive part of this agent is the
 tool calls on the timeline, not the tokens.
+
+It takes `messages`, not `prompt`. That is the whole of the memory fix: a single prompt string is
+what makes a model start every turn from nothing.
 
 `stopWhen: stepCountIs(8)` bounds the tool loop. Without a stop condition the SDK takes a single
 step, so a tool call would be requested and never answered.

@@ -1,5 +1,5 @@
 import { openai } from "@ai-sdk/openai";
-import { generateText, stepCountIs, type ToolSet } from "ai";
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
 
 /**
  * generateText, not streamText.
@@ -23,7 +23,13 @@ export type Turn = {
 
 export type TurnRequest = {
   system: string;
-  prompt: string;
+  /**
+   * The conversation, oldest first, ending with the message this turn answers.
+   *
+   * A `messages` array rather than a single `prompt`: with one string the model starts every turn
+   * from nothing, so "the thread you just replied to" has no referent and it guesses.
+   */
+  messages: ModelMessage[];
   tools: ToolSet;
 };
 
@@ -33,11 +39,11 @@ export type TurnRequest = {
  * It knows nothing about Plain. Each surface passes its own tools, already wrapped in its own
  * human gate, because the gate mechanisms differ and cannot live here.
  */
-export async function runTurn({ system, prompt, tools }: TurnRequest): Promise<Turn> {
+export async function runTurn({ system, messages, tools }: TurnRequest): Promise<Turn> {
   const result = await generateText({
     model: openai(modelName()),
     system,
-    prompt,
+    messages,
     tools,
     // Without a stop condition the SDK takes a single step, so a tool call would be requested and
     // never answered, and the turn would end with no text.

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { DiscussionPayload } from "./serve.ts";
 import { shouldAnswerDiscussion, threadIDOf } from "./serve.ts";
-import { cardText, promptWithContext } from "./agent.ts";
+import { cardText, conversation, promptWithContext } from "./agent.ts";
 
 const ME = "mu_agent";
 
@@ -104,5 +104,60 @@ describe("the approval card", () => {
   test("carries the whole draft, not a summary", () => {
     const draft = "Here is a very specific answer with steps.";
     expect(cardText(target, draft)).toContain(draft);
+  });
+});
+
+describe("building the conversation", () => {
+  const ctx = { discussionID: "disc_1", threadID: "th_1" };
+
+  // The bug this fixes: with a single prompt string the model started every turn from nothing, so
+  // "the thread you just replied to" had no referent and it picked one at random.
+  test("earlier turns come through, oldest first", () => {
+    const history = [
+      { role: "user" as const, content: "whats up with my queue" },
+      { role: "assistant" as const, content: "I answered the CC vs BCC thread." },
+      { role: "user" as const, content: "give me a link" },
+    ];
+    const messages = conversation(history, "give me a link", ctx);
+    expect(messages).toHaveLength(3);
+    expect(messages[0]?.content).toBe("whats up with my queue");
+    expect(messages[1]?.role).toBe("assistant");
+  });
+
+  // Plain stores the message before the webhook fires, so it is already in the history. Sending it
+  // twice would show the model the same question as two separate turns.
+  test("the message being answered is not duplicated", () => {
+    const history = [
+      { role: "user" as const, content: "first" },
+      { role: "user" as const, content: "second" },
+    ];
+    const messages = conversation(history, "second", ctx);
+    expect(messages).toHaveLength(2);
+    expect(messages.filter((m) => m.content.includes("second"))).toHaveLength(1);
+  });
+
+  test("the where-am-I preamble rides on the newest message only", () => {
+    const messages = conversation([{ role: "user", content: "old" }], "new", ctx);
+    expect(messages[0]?.content).toBe("old");
+    expect(messages[1]?.content).toContain("th_1");
+    expect(messages[1]?.content).toContain("new");
+  });
+
+  test("an empty history is just the one message", () => {
+    expect(conversation([], "hello", ctx)).toHaveLength(1);
+  });
+
+  // A person can ask the same thing twice. Filtering by content would delete the earlier one too
+  // and quietly shorten the history.
+  test("an identical earlier question survives", () => {
+    const history = [
+      { role: "user" as const, content: "any update" },
+      { role: "assistant" as const, content: "not yet" },
+      { role: "user" as const, content: "any update" },
+    ];
+    const messages = conversation(history, "any update", ctx);
+    expect(messages).toHaveLength(3);
+    expect(messages[0]?.content).toBe("any update");
+    expect(messages[1]?.content).toBe("not yet");
   });
 });

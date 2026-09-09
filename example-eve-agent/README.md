@@ -34,6 +34,12 @@ make the second case useful rather than a dead end.
 creates the session on the first message and resumes it on every later one, so this package has no
 session store and no resume id to track.
 
+**That resume is also this package's memory**, and it is the one place eve saves you real work. The
+AI SDK package has to read the discussion's messages back out of Plain and rebuild a `messages`
+array every turn; here the durable session already holds it. Get this wrong and the symptom is not
+an error: the agent answers each message as if it were the first, so "the thread you just replied
+to" has no referent and it picks one rather than asking.
+
 Every write back to Plain lives in the channel's `events`, not in the tools:
 
 | eve channel event | What this package does |

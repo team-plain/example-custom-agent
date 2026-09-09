@@ -26,6 +26,9 @@ const APPROVAL_POLL_MS = 2_000;
 const KNOWLEDGE_RESULTS = 4;
 const QUEUE_RESULTS = 10;
 
+// Enough turns for a person to refer back to something without paying for the whole history.
+const HISTORY_MESSAGES = 30;
+
 /**
  * Discussions left with an approval card open.
  *
@@ -43,9 +46,12 @@ export async function handleDiscussion(
   await plain.setDiscussionAgentStatus(context.discussionID, "IN_PROGRESS");
 
   try {
+    // Read before the turn, so the model sees what was said earlier in this discussion. The newest
+    // message is already in there, carrying the where-am-I preamble on top.
+    const history = await plain.discussionHistory(context.discussionID, HISTORY_MESSAGES);
     const turn = await runTurn({
       system,
-      prompt: promptWithContext(prompt, context),
+      messages: conversation(history, prompt, context),
       tools: agentTools(plain, context),
     });
 
@@ -69,6 +75,25 @@ export async function handleDiscussion(
     }
     approvalOpen.delete(context.discussionID);
   }
+}
+
+/**
+ * The conversation to send, ending with the message this turn answers.
+ *
+ * The history already contains that newest message, because Plain stored it before the webhook
+ * arrived. It is dropped and re-added with the where-am-I preamble attached, so the preamble sits
+ * on the turn being answered rather than on something said an hour ago.
+ */
+export function conversation(
+  history: { role: "user" | "assistant"; content: string }[],
+  prompt: string,
+  context: TurnContext,
+): { role: "user" | "assistant"; content: string }[] {
+  // Only the last entry is dropped, and only when it is the message being answered. Filtering by
+  // content would also delete an identical question asked earlier, losing real history.
+  const earlier = [...history];
+  if (earlier.at(-1)?.content.trim() === prompt.trim()) earlier.pop();
+  return [...earlier, { role: "user", content: promptWithContext(prompt, context) }];
 }
 
 // Says up front where the agent is, so it does not reach for its own thread when there is none and

@@ -20,6 +20,14 @@ export type KnowledgeHit = {
   content: string;
 };
 
+/**
+ * One earlier message in this discussion, as the model should see it.
+ *
+ * `user` is a person on your team, `assistant` is this agent. Plain calls those OUTBOUND and
+ * INBOUND, which reads backwards until you remember it is describing the discussion, not the model.
+ */
+export type HistoryMessage = { role: "user" | "assistant"; content: string };
+
 export type ThreadStatus = "TODO" | "SNOOZED" | "DONE";
 
 /** Enough about a thread to list it. What the queue and search return cheaply. */
@@ -35,6 +43,12 @@ export type ThreadSummary = { id: string; title: string; status: string };
 export type ThreadTarget = ThreadSummary & { customerName: string };
 
 type MutationError = { message: string; code: string } | null;
+
+// Tool calls and approval cards live in the message list alongside real messages.
+function isMachinery(typename: string | undefined): boolean {
+  if (typename === undefined) return false;
+  return typename.includes("ToolCall") || typename.includes("Approval");
+}
 
 /** Every Plain call this agent makes, on one client. */
 export class Plain {
@@ -98,6 +112,31 @@ export class Plain {
           : result.indexedDocument.url,
       content: result.content,
     }));
+  }
+
+  /**
+   * The conversation so far, oldest first, so a turn is not a fresh start every time.
+   *
+   * Without this the agent answers each webhook with no idea a previous message existed: asked to
+   * act on "the thread you just replied to" it has to guess, and guesses wrong.
+   */
+  async discussionHistory(discussionID: string, limit: number): Promise<HistoryMessage[]> {
+    const discussion = await this.timeout(this.sdk.query.discussion({ discussionId: discussionID }));
+    // `last`, not `first`: on a long discussion the useful context is the recent end.
+    const page = await this.timeout(discussion.messages({ last: limit }));
+
+    const history: HistoryMessage[] = [];
+    for (const message of page.nodes) {
+      if (message.type !== "OUTBOUND" && message.type !== "INBOUND") continue;
+      // A discussion's messages include the tool calls and approval cards this agent wrote. They
+      // are machinery, not conversation, and feeding them back reads as the model talking to itself.
+      if (isMachinery(message.entry?.__typename)) continue;
+
+      const content = (message.text ?? "").trim();
+      if (content === "") continue;
+      history.push({ role: message.type === "OUTBOUND" ? "user" : "assistant", content });
+    }
+    return history;
   }
 
   /** One thread with its customer's name, for naming a reply's target on the approval card. */

@@ -31,6 +31,11 @@ call a customer ever sees is the one call a person decides.
 **A Sidekick session opened on nothing still works.** Plain does not always attach a thread, so the
 agent can search the queue and find the one it needs rather than giving up.
 
+**Both agents remember the conversation.** Plain is the store: the AI SDK package reads the
+discussion's messages and sends them as a `messages` array, and eve resumes its own durable session
+per discussion. Without that a turn starts from nothing, and a request like "the thread you just
+replied to" has no referent, so the model guesses instead of asking.
+
 ## The packages
 
 | Package | Agent built with | Reach for it when |
@@ -56,6 +61,7 @@ Worth reading side by side, because the frameworks force genuinely different ans
 | Plain writes come from | the channel's event handlers | the tool bodies |
 | A tool learns the thread id from | the prompt, then checks it | the closure it was built with |
 | Reachable threads are scoped | per process | per turn |
+| Conversation memory comes from | eve's durable session | Plain's discussion messages |
 
 The last two rows are the sharpest difference, and the queue tools are what make them matter. Once
 an agent can discover threads nobody handed it, a thread id becomes model output, so both packages
