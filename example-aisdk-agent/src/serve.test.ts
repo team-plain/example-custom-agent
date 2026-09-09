@@ -211,7 +211,7 @@ describe("pinning a reply to the thread that was named", () => {
   test("a different thread is refused when one was named", () => {
     const result = mayReplyTo(OTHER, new Set([OTHER]), new Set(["th_01NOTAREALTHREADID0000000"]));
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain("not the thread to reply on");
+    if (!result.ok) expect(result.reason).toContain("not the thread to act on");
   });
 
   test("the named thread is allowed when it is also reachable", () => {

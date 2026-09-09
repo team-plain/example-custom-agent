@@ -44,6 +44,9 @@ replied to" has no referent, so the model guesses instead of asking.
 | [`example-eve-agent`](example-eve-agent) | [Vercel eve](https://github.com/vercel/eve), a filesystem-first agent framework | you want durable sessions, one tool per file, and an approval gate the framework parks for you. |
 | [`example-aisdk-agent`](example-aisdk-agent) | the [Vercel AI SDK](https://ai-sdk.dev) directly, no framework | you want to own the model loop and see every Plain call written out with nothing in between. |
 
+Both run `anthropic/claude-sonnet-5` through the Vercel AI Gateway, so any difference in how they
+behave is the architecture rather than the model.
+
 `example-aisdk-agent` is Bun and uses the root install. `example-eve-agent` is npm and Node 24, for
 the reasons below.
 
@@ -123,6 +126,12 @@ a question.
 fixed this reliably, so it is a guard now: `mayReplyTo` refuses any thread other than the ones named
 in the request, and `read_customer_thread` is behind the same check. Being given a bad id is not
 permission to choose your own.
+
+A thread id is trusted from two places and text inside a customer's message is neither: ids your
+colleague typed in the request, and ids a webhook delivered or a search returned. The first version
+demanded **both**, which broke every `eve invoke` run: with no webhook nothing is reachable, so a
+colleague naming a real thread was refused as though the id were fake. The agent then behaved
+impeccably about a problem the guard had invented, which is the hardest kind of bug to see.
 
 **It turned an empty search into a negative fact.** Asked about SOC 2 it answered that the company
 is not certified, which the knowledge base never said. Finding nothing means the docs do not cover

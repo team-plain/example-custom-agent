@@ -9,9 +9,9 @@ const PROMPT_PATH = join(import.meta.dir, "..", "prompts", "agent.md");
 const VARIABLES: [string, string][] = [
   ["PLAIN_API_KEY", "required"],
   ["PLAIN_WEBHOOK_SECRET", "required"],
-  ["OPENAI_API_KEY", "required, this package calls the model directly"],
+  ["AI_GATEWAY_API_KEY", "required, routes the model through the Vercel AI Gateway"],
   ["PLAIN_API_URL", "optional, defaults to production"],
-  ["AGENT_MODEL", "optional, defaults to gpt-4o-mini"],
+  ["AGENT_MODEL", "optional, defaults to anthropic/claude-sonnet-5"],
 ];
 
 const command = Bun.argv[2] ?? "serve";

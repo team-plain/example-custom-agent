@@ -1,7 +1,7 @@
 import { defineTool } from "eve/tools";
 import { always } from "eve/tools/approval";
 import { z } from "zod";
-import { mayReplyTo, plain } from "#lib/client.ts";
+import { mayReplyTo, plain, trustRequestedThread } from "#lib/client.ts";
 
 /**
  * The one call a customer sees, so the one call a person decides.
@@ -20,6 +20,8 @@ export default defineTool({
   }),
   approval: always(),
   async execute({ threadId, message }) {
+    // Only bites outside a real delivery, so `eve invoke` can be handed a thread id directly.
+    trustRequestedThread(threadId);
     const allowed = mayReplyTo(threadId);
     if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
 

@@ -40,8 +40,8 @@ nothing about Plain. Everything Plain-specific is in `src/agent.ts` and `src/pla
 | `src/core.ts` | the model call, and nothing else |
 | `prompts/agent.md` | the system prompt, read fresh on startup |
 
-Written in TypeScript, run with [Bun](https://bun.sh). This package holds a model key, because it
-calls the model itself rather than driving a framework that brokers it for you.
+Written in TypeScript, run with [Bun](https://bun.sh). This package holds a model credential,
+because it calls the model itself rather than driving a framework that brokers it for you.
 
 ## Setting it up
 
@@ -56,7 +56,7 @@ calls the model itself rather than driving a framework that brokers it for you.
 2. Copy `.env.example` to `.env` in this directory and fill in `PLAIN_API_KEY`,
    `PLAIN_WEBHOOK_SECRET` from
    [Settings → Request Signing](https://app.plain.com/~/settings/request-signing/), and
-   `OPENAI_API_KEY`.
+   `AI_GATEWAY_API_KEY`.
 
 3. Get a public https URL that reaches this process. Locally, `ngrok http 8082`.
 
@@ -213,9 +213,15 @@ what makes a model start every turn from nothing.
 `stopWhen: stepCountIs(8)` bounds the tool loop. Without a stop condition the SDK takes a single
 step, so a tool call would be requested and never answered.
 
-The default model is `gpt-4o-mini`. A reasoning model is a poor fit here: `gpt-5-mini` returned
-empty content on a small output budget, which reads as a broken agent rather than a thinking one.
-`AGENT_MODEL` overrides it.
+The default model is **`anthropic/claude-sonnet-5`**, passed as a bare string id, which the AI SDK
+routes through the Vercel AI Gateway. That keeps this package to one model credential and lets
+`AGENT_MODEL` name anything the gateway serves.
+
+Check an id against the gateway's model list before using it. A near-miss returns a 404, and the
+turn then fails for a reason that has nothing to do with your agent.
+
+Reaching a provider directly is a two-line change: install `@ai-sdk/anthropic`, set that provider's
+key, and pass its model object instead of the string.
 
 ## .env reads over the shell
 

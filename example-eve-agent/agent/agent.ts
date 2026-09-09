@@ -1,7 +1,8 @@
 import { defineAgent } from "eve";
 
-// Haiku through the AI Gateway: cheap enough to run this example repeatedly without thinking about
-// it. Swap the string for any model the gateway serves, or a provider model object.
+// Sonnet through the AI Gateway. A string model id routes through the gateway, which needs
+// AI_GATEWAY_API_KEY or a VERCEL_OIDC_TOKEN. Swap it for a provider model object to skip the
+// gateway. Check the exact id against the gateway's model list: a near-miss returns a 404.
 export default defineAgent({
-  model: "anthropic/claude-haiku-4.5",
+  model: "anthropic/claude-sonnet-5",
 });

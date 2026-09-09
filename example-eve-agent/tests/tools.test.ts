@@ -13,8 +13,10 @@ import {
   mayReplyTo,
   refuseThread,
   rememberRequestedThreads,
+  markChannelHasRun,
   rememberThread,
   threadIDsIn,
+  trustRequestedThread,
 } from "../agent/lib/client.ts";
 
 /**
@@ -103,7 +105,7 @@ describe("pinning a reply to the thread that was named", () => {
     rememberRequestedThreads("please reply to th_01NOTAREALTHREADID0000000");
     const result = mayReplyTo(OTHER);
     assert.equal(result.ok, false);
-    if (!result.ok) assert.match(result.reason, /not the thread to reply on/);
+    if (!result.ok) assert.match(result.reason, /not the thread to act on/);
   });
 
   test("the named thread is allowed when a webhook delivered it", () => {
@@ -121,5 +123,30 @@ describe("pinning a reply to the thread that was named", () => {
     assert.equal(mayReplyTo(ID).ok, false);
     rememberThread(ID);
     assert.equal(mayReplyTo(ID).ok, true);
+  });
+});
+
+describe("trusting a prompt id outside a real delivery", () => {
+  // eve invoke has no webhook, so without this every local run was refused and the package could
+  // not be tried before wiring webhooks.
+  test("a local run trusts the id it was handed", () => {
+    forgetThreads();
+    forgetRequestedThreads();
+    trustRequestedThread("th_01LOCALRUNTHREADID000000");
+    assert.equal(mayReplyTo("th_01LOCALRUNTHREADID000000").ok, true);
+  });
+
+  /**
+   * The guard that makes the above safe. Once a webhook has been handled the channel is the only
+   * thing that decides what was asked, so an id lifted out of a customer's message stays refused.
+   */
+  test("after a real delivery it trusts nothing from the prompt", () => {
+    forgetThreads();
+    forgetRequestedThreads();
+    markChannelHasRun();
+    trustRequestedThread("th_01INJECTEDFROMTHREAD000");
+    const result = mayReplyTo("th_01INJECTEDFROMTHREAD000");
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.reason, /did not come from this conversation/);
   });
 });
